@@ -1,0 +1,136 @@
+# ----------------------------------------------------------------------------------
+#                      r u s t f m t   -   C O N F I G
+# ==================================================================================
+#
+# Original: Robbepop <robbepop@web.de>
+# Updated to remove options no longer supported by rustfmt stable (1.9.0+).
+#
+# Only `max_width = 100` is active. Uncomment others to customize.
+# Run `rustfmt --print-config=default <any-file.rs>` to see all current defaults.
+# ----------------------------------------------------------------------------------
+
+# Do not reformat out of line modules.
+# Default: false
+#   skip_children =
+
+# Maximum width of each line.
+# Default: 100
+max_width = 100
+
+# Number of spaces per tab.
+# Default: 4
+#   tab_spaces =
+
+# Use tab characters for indentation, spaces for alignment.
+# Default: false
+#   hard_tabs =
+
+# Maximum width of the args of a function call before falling back to vertical formatting.
+# Default: 60
+#   fn_call_width =
+
+# Maximum width in the body of a struct literal before falling back to vertical formatting.
+# Default: 18
+#   struct_lit_width =
+
+# Maximum width in the body of a struct variant before falling back to vertical formatting.
+# Default: 35
+#   struct_variant_width =
+
+# Always print the abi for extern items.
+# Default: true
+#   force_explicit_abi =
+
+# Unix or Windows line endings.
+# Values: Auto | Windows | Unix | Native
+# Default: Auto
+#   newline_style =
+
+# Brace style for functions, structs, and enums.
+# (Previously split into fn_brace_style and item_brace_style.)
+# Values: AlwaysNextLine | PreferSameLine | SameLineWhere
+# Default: SameLineWhere
+#   brace_style =
+
+# Brace style for control flow constructs.
+# Values: AlwaysSameLine | ClosingNextLine | AlwaysNextLine
+# Default: AlwaysSameLine
+#   control_brace_style =
+
+# Put empty-body implementations and functions on a single line.
+# (Previously impl_empty_single_line / fn_empty_single_line.)
+# Default: true
+#   empty_item_single_line =
+
+# Put single-expression functions on a single line.
+# Default: false
+#   fn_single_line =
+
+# Layout of function parameters.
+# (Previously fn_args_layout / fn_args_density.)
+# Values: Compressed | Tall | Vertical
+# Default: Tall
+#   fn_params_layout =
+
+# Determines if '+' or '=' are wrapped in spaces in the punctuation of types.
+# Values: Compressed | Wide
+# Default: Wide
+#   type_punctuation_density =
+
+# Trailing comma behavior for structs, enums, and struct literals.
+# (Previously struct_trailing_comma / struct_lit_trailing_comma / enum_trailing_comma.)
+# Values: Always | Never | Vertical
+# Default: Vertical
+#   trailing_comma =
+
+# Put a trailing comma after a block based match arm.
+# Default: false
+#   match_block_trailing_comma =
+
+# Wrap multiline match arms in blocks.
+# (Previously wrap_match_arms.)
+# Default: true
+#   match_arm_blocks =
+
+# Reorder import statements alphabetically.
+# Default: true
+#   reorder_imports =
+
+# Maximum line length for single line if-else expressions.
+# A value of zero means always break if-else expressions.
+# Default: 50
+#   single_line_if_else_max_width =
+
+# Format string literals where necessary.
+# Default: false
+#   format_strings =
+
+# Break comments to fit on the line.
+# Default: false
+#   wrap_comments =
+
+# Convert /* */ comments to // comments where possible.
+# Default: false
+#   normalize_comments =
+
+# Put spaces around the .. and ... range operators.
+# Default: false
+#   spaces_around_ranges =
+
+# Leave a space before the colon in type annotations and trait/lifetime bounds.
+# (Previously space_before_type_annotation / space_before_bound.)
+# Default: false
+#   space_before_colon =
+
+# Leave a space after the colon in type annotations and trait/lifetime bounds.
+# (Previously space_after_type_annotation_colon / space_after_bound_colon.)
+# Default: true
+#   space_after_colon =
+
+# Replace uses of the try! macro by the ? shorthand.
+# Default: false
+#   use_try_shorthand =
+
+# Replace strings of _ wildcards by a single .. in tuple patterns.
+# Default: false
+#   condense_wildcard_suffixes =
