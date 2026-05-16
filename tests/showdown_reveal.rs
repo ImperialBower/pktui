@@ -39,7 +39,7 @@ fn multiway_showdown_populates_last_showdown_snapshot() {
                         .unwrap();
                     }
                     Awaiting::HandComplete | Awaiting::SessionOver => break,
-                    _ => {
+                    Awaiting::Bot => {
                         update(&mut app, Msg::Tick).unwrap();
                     }
                 }

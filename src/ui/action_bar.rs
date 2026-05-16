@@ -48,7 +48,7 @@ pub(crate) fn min_for(p: &PlayState, seat: u8) -> usize {
     }
 }
 
-/// Returns the (min, half_pot, pot) preset triple displayed in the action
+/// Returns the (min, `half_pot`, pot) preset triple displayed in the action
 /// bar so the user knows what each `1`/`2`/`3` key will set the bet to.
 #[must_use]
 pub(crate) fn preset_values(p: &PlayState, seat: u8) -> (usize, usize, usize) {

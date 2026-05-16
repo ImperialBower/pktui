@@ -119,7 +119,7 @@ fn key_to_msg(app: &App, key: &KeyEvent) -> Msg {
 }
 
 fn play_key(awaiting: Awaiting, key: &KeyEvent) -> Msg {
-    use KeyCode::*;
+    use KeyCode::{Backspace, Char, Enter};
     match (awaiting, key.code) {
         // Between hands: Enter deals next.
         (Awaiting::HandComplete, Enter | Char(' ')) => Msg::NextHand,
@@ -129,16 +129,12 @@ fn play_key(awaiting: Awaiting, key: &KeyEvent) -> Msg {
             Char('k') => Msg::Action(PlayerAction::Check),
             Char('c') => Msg::Action(PlayerAction::Call),
             Char('a') => Msg::Action(PlayerAction::AllIn),
-            Char('b') => Msg::BetConfirm,
-            Char('r') => Msg::BetConfirm,
-            Enter => Msg::BetConfirm,
+            Char('b' | 'r') | Enter => Msg::BetConfirm,
             Char('1') => Msg::BetSet(0), // sentinel: "min" — resolved in update
             Char('2') => Msg::BetSet(1), // sentinel: "half pot"
             Char('3') => Msg::BetSet(2), // sentinel: "pot"
-            Char('+') => Msg::BetBump(50),
-            Char('-') => Msg::BetCut(50),
-            Char('=') => Msg::BetBump(50),
-            Char('_') => Msg::BetCut(50),
+            Char('+' | '=') => Msg::BetBump(50),
+            Char('-' | '_') => Msg::BetCut(50),
             Char(c) if c.is_ascii_digit() => Msg::BetDigit((c as u8) - b'0'),
             Backspace => Msg::BetBackspace,
             _ => Msg::Noop,
@@ -148,20 +144,20 @@ fn play_key(awaiting: Awaiting, key: &KeyEvent) -> Msg {
 }
 
 fn arena_key(key: &KeyEvent) -> Msg {
-    use KeyCode::*;
+    use KeyCode::Char;
     match key.code {
-        Char('+') | Char('=') => Msg::ArenaFaster,
-        Char('-') | Char('_') => Msg::ArenaSlower,
+        Char('+' | '=') => Msg::ArenaFaster,
+        Char('-' | '_') => Msg::ArenaSlower,
         _ => Msg::Noop,
     }
 }
 
 fn replay_key(key: &KeyEvent) -> Msg {
-    use KeyCode::*;
+    use KeyCode::{Char, Down, Enter, Left, Right, Up};
     match key.code {
         Char('n') | Right => Msg::ReplayNextStreet,
         Char('p') | Left => Msg::ReplayPrevStreet,
-        Char('N') | Char(' ') | Enter | Down => Msg::ReplayNextHand,
+        Char('N' | ' ') | Enter | Down => Msg::ReplayNextHand,
         Char('P') | Up => Msg::ReplayPrevHand,
         _ => Msg::Noop,
     }
@@ -305,10 +301,9 @@ fn bet_preset(app: &mut App, preset: usize) {
         table.bet + table.min_raise()
     };
     let amount = match preset {
-        0 => min,                // "min"
         1 => (pot / 2).max(min), // "half pot"
         2 => pot.max(min),       // "pot"
-        _ => min,
+        _ => min,                // 0 = "min" + any out-of-range sentinel
     };
     p.bet.set(amount);
 }

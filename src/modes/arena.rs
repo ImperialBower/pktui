@@ -113,7 +113,9 @@ impl ArenaState {
             bots,
             rng,
             phase: ArenaPhase::Running,
-            last_step_at: Instant::now() - Duration::from_secs(1),
+            last_step_at: Instant::now()
+                .checked_sub(Duration::from_secs(1))
+                .unwrap_or_else(Instant::now),
             speed: Duration::from_millis(args.speed_ms),
             seed,
         })
@@ -136,8 +138,7 @@ impl ArenaState {
     pub fn seat_name(&self, seat: u8) -> String {
         self.bots
             .get(seat as usize)
-            .map(|b| b.name.clone())
-            .unwrap_or_else(|| format!("seat {seat}"))
+            .map_or_else(|| format!("seat {seat}"), |b| b.name.clone())
     }
 
     /// Speeds bots up (smaller delay) by 100 ms, floored at 50 ms.
@@ -157,7 +158,7 @@ impl ArenaState {
     /// assert_eq!(s.speed, Duration::from_millis(700));
     /// ```
     pub fn speed_up(&mut self) {
-        let ms = self.speed.as_millis() as u64;
+        let ms = speed_millis(self.speed);
         self.speed = Duration::from_millis(ms.saturating_sub(100).max(50));
     }
 
@@ -178,7 +179,7 @@ impl ArenaState {
     /// assert_eq!(s.speed, Duration::from_millis(900));
     /// ```
     pub fn speed_down(&mut self) {
-        let ms = self.speed.as_millis() as u64;
+        let ms = speed_millis(self.speed);
         self.speed = Duration::from_millis((ms + 100).min(5000));
     }
 
@@ -227,7 +228,7 @@ impl ArenaState {
             }
             SessionStep::HandComplete => {
                 let winnings = self.session.end_hand()?;
-                let n = self.session.table.seats.0.len() as u8;
+                let n = u8::try_from(self.session.table.seats.0.len()).unwrap_or(u8::MAX);
                 for w in winnings.vec() {
                     let chips = w.equity.chips;
                     for seat in 0..n {
@@ -258,12 +259,20 @@ impl ArenaState {
 }
 
 fn severity_for_action(action: pkcore::casino::action::PlayerAction) -> Severity {
-    use pkcore::casino::action::PlayerAction::*;
+    use pkcore::casino::action::PlayerAction::{AllIn, Bet, Call, Check, Fold, Raise};
     match action {
         Fold => Severity::Fold,
         Check | Call => Severity::Info,
         Bet(_) | Raise(_) | AllIn => Severity::Action,
     }
+}
+
+/// `Duration::as_millis()` returns `u128`; pktui's speed is always set from
+/// `u64` milliseconds and clamped to ≤ `5_000`, so saturating to `u64::MAX`
+/// here can never lose information.
+#[must_use]
+fn speed_millis(d: Duration) -> u64 {
+    u64::try_from(d.as_millis()).unwrap_or(u64::MAX)
 }
 
 #[cfg(test)]
@@ -307,7 +316,7 @@ mod tests {
         assert!(s.speed >= Duration::from_millis(50));
         s.speed = Duration::from_millis(4990);
         s.speed_down();
-        assert!(s.speed <= Duration::from_millis(5000));
+        assert!(s.speed <= Duration::from_secs(5));
     }
 
     #[test]

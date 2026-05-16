@@ -51,7 +51,7 @@ pub fn render_table_view_play(state: &PlayState, frame: &mut Frame, area: Rect) 
         reveal_at_showdown,
         |seat| state.seat_name(seat),
     );
-    render_seats(frame, chunks[0], rows);
+    render_seats(frame, chunks[0], &rows);
     render_board(&state.session.table, frame, chunks[1]);
 }
 
@@ -71,8 +71,23 @@ pub fn render_table_view_arena(state: &ArenaState, frame: &mut Frame, area: Rect
     let rows = seat_rows(&state.session.table, None, active_seat, None, |seat| {
         state.seat_name(seat)
     });
-    render_seats(frame, chunks[0], rows);
+    render_seats(frame, chunks[0], &rows);
     render_board(&state.session.table, frame, chunks[1]);
+}
+
+/// Mutually-exclusive emphasis a single seat row can carry, in priority order
+/// (highest first). Packed into one field to keep [`SeatRow`] below clippy's
+/// `struct_excessive_bools` threshold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Accent {
+    /// The seat owns the active turn highlight (yellow + bold).
+    Active,
+    /// The seat is the human player (cyan).
+    Hero,
+    /// The seat's cards were just revealed at showdown (bold green hole).
+    Revealed,
+    #[default]
+    None,
 }
 
 struct SeatRow {
@@ -83,12 +98,7 @@ struct SeatRow {
     bet: usize,
     tag: String,
     folded: bool,
-    is_hero: bool,
-    is_active: bool,
-    /// Set when the row's hole cards come from a captured showdown reveal
-    /// rather than the live table — used to draw them in green so the user
-    /// notices the reveal.
-    revealed_at_showdown: bool,
+    accent: Accent,
 }
 
 fn seat_rows<F: Fn(u8) -> String>(
@@ -101,7 +111,7 @@ fn seat_rows<F: Fn(u8) -> String>(
     let btn = table.button;
     let sb = table.determine_small_blind();
     let bb = table.determine_big_blind();
-    let n = table.seats.0.len() as u8;
+    let n = u8::try_from(table.seats.0.len()).unwrap_or(u8::MAX);
     let mut out = Vec::with_capacity(n as usize);
     for i in 0..n {
         let Some(seat_data) = table.seats.get_seat(i) else {
@@ -118,12 +128,11 @@ fn seat_rows<F: Fn(u8) -> String>(
         // hidden bot cards. Snapshots only contain still-active seats so
         // folded players never appear here.
         let revealed = showdown.and_then(|s| s.iter().find(|r| r.seat == i));
-        let (hole, revealed_at_showdown) = if let Some(r) = revealed {
+        let (hole, is_revealed) = if let Some(r) = revealed {
             let class = r
                 .hand_class
                 .as_deref()
-                .map(|c| format!(" {c}"))
-                .unwrap_or_default();
+                .map_or_else(String::new, |c| format!(" {c}"));
             (format!("{}{class}", r.hole), true)
         } else if seat_data.cards.has_cards() {
             let s = if hero_seat == Some(i) || hero_seat.is_none() {
@@ -134,6 +143,16 @@ fn seat_rows<F: Fn(u8) -> String>(
             (s, false)
         } else {
             (String::new(), false)
+        };
+
+        let accent = if is_revealed {
+            Accent::Revealed
+        } else if active_seat == Some(i) {
+            Accent::Active
+        } else if hero_seat == Some(i) {
+            Accent::Hero
+        } else {
+            Accent::None
         };
 
         let tag = position_tag(i, btn, sb, bb)
@@ -147,15 +166,13 @@ fn seat_rows<F: Fn(u8) -> String>(
             bet,
             tag,
             folded,
-            is_hero: hero_seat == Some(i),
-            is_active: active_seat == Some(i),
-            revealed_at_showdown,
+            accent,
         });
     }
     out
 }
 
-fn render_seats(frame: &mut Frame, area: Rect, rows: Vec<SeatRow>) {
+fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
     let header = Row::new(vec![
         Cell::from("#"),
         Cell::from("Name"),
@@ -182,14 +199,19 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: Vec<SeatRow>) {
     let body: Vec<Row> = rows
         .iter()
         .map(|r| {
-            let mut style = Style::default();
-            if r.folded {
-                style = style.fg(Color::DarkGray).add_modifier(Modifier::DIM);
-            } else if r.is_active {
-                style = style.fg(Color::Yellow).add_modifier(Modifier::BOLD);
-            } else if r.is_hero {
-                style = style.fg(Color::Cyan);
-            }
+            let style = if r.folded {
+                Style::default()
+                    .fg(Color::DarkGray)
+                    .add_modifier(Modifier::DIM)
+            } else {
+                match r.accent {
+                    Accent::Active => Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                    Accent::Hero => Style::default().fg(Color::Cyan),
+                    Accent::Revealed | Accent::None => Style::default(),
+                }
+            };
             let badge = if r.folded {
                 "FOLD".to_string()
             } else if r.bet > 0 {
@@ -199,7 +221,7 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: Vec<SeatRow>) {
             };
             // Showdown reveals are drawn in bold green so the user's eye
             // jumps straight to them when a hand resolves.
-            let hole_cell = if r.revealed_at_showdown {
+            let hole_cell = if r.accent == Accent::Revealed {
                 Cell::from(r.hole.clone()).style(
                     Style::default()
                         .fg(Color::Green)

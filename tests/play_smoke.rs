@@ -28,7 +28,7 @@ fn fold_when_human_to_act_advances_state() {
         if let AppMode::Play(p) = &app.mode {
             match p.awaiting {
                 Awaiting::Human(_) | Awaiting::HandComplete | Awaiting::SessionOver => break,
-                _ => {}
+                Awaiting::Bot => {}
             }
         }
         update(&mut app, Msg::Tick).unwrap();

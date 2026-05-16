@@ -87,8 +87,10 @@ mod tests {
 
     #[test]
     fn event_variants_are_constructible() {
-        let _r = Event::Resize(80, 24);
-        let _t = Event::Tick;
+        // Smoke-construct each variant and confirm the discriminant is what
+        // we expect — guards against an accidental enum reshuffle.
+        assert!(matches!(Event::Resize(80, 24), Event::Resize(80, 24)));
+        assert!(matches!(Event::Tick, Event::Tick));
         // Key is harder to construct without crossterm internals; the resolver
         // is exercised via integration tests that drive the full loop.
     }

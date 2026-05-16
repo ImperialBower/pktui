@@ -289,7 +289,9 @@ impl PlayState {
             rng,
             awaiting: Awaiting::Bot,
             bet: BetField::default(),
-            last_step_at: Instant::now() - Duration::from_secs(1),
+            last_step_at: Instant::now()
+                .checked_sub(Duration::from_secs(1))
+                .unwrap_or_else(Instant::now),
             speed: Duration::from_millis(600),
             seed,
             last_showdown: None,
@@ -317,8 +319,7 @@ impl PlayState {
         } else {
             self.bots
                 .get((seat as usize).saturating_sub(1))
-                .map(|b| b.name.clone())
-                .unwrap_or_else(|| format!("seat {seat}"))
+                .map_or_else(|| format!("seat {seat}"), |b| b.name.clone())
         }
     }
 
@@ -395,7 +396,7 @@ impl PlayState {
                 // table and zeros every seat's hole cards. Only meaningful
                 // when 2+ seats are still in the hand — a single-seat win
                 // (everyone else folded) doesn't show cards.
-                let n = self.session.table.seats.0.len() as u8;
+                let n = seat_count(&self.session.table);
                 let showdown = capture_showdown(&self.session.table, n, |s| self.seat_name(s));
                 if let Some(rows) = &showdown {
                     for row in rows {
@@ -434,8 +435,7 @@ impl PlayState {
                         .table
                         .seats
                         .get_seat(HERO_SEAT)
-                        .map(|s| s.is_empty() || s.player.chips == 0)
-                        .unwrap_or(true)
+                        .is_none_or(|s| s.is_empty() || s.player.chips == 0)
                 {
                     self.awaiting = Awaiting::SessionOver;
                     log.push(Severity::Info, "Session over. Press q to quit.".to_string());
@@ -465,7 +465,7 @@ impl PlayState {
             format!("Hand {} dealt", self.session.hand_number),
         );
         self.awaiting = Awaiting::Bot;
-        self.last_step_at = Instant::now() - self.speed;
+        self.last_step_at = instant_minus(self.speed);
         Ok(())
     }
 
@@ -482,11 +482,29 @@ impl PlayState {
         };
         let desc = describe_action(&self.session.table, seat, action);
         self.session.apply_action(seat, action)?;
-        log.push(severity_for(action), format!("{}: {desc}", HERO_NAME));
+        log.push(severity_for(action), format!("{HERO_NAME}: {desc}"));
         self.awaiting = Awaiting::Bot;
-        self.last_step_at = Instant::now() - self.speed;
+        self.last_step_at = instant_minus(self.speed);
         Ok(())
     }
+}
+
+/// `Instant::now().checked_sub(d).unwrap_or_else(Instant::now)` — extracted
+/// so we can reuse it without retyping the clippy-pedantic dance.
+#[must_use]
+fn instant_minus(d: Duration) -> Instant {
+    Instant::now().checked_sub(d).unwrap_or_else(Instant::now)
+}
+
+/// Casts the seat count (always ≤ 9 in NLHE) to `u8`.
+///
+/// Wraps the cast in [`u8::try_from`] so the pedantic
+/// `cast_possible_truncation` lint stays quiet; the `unwrap_or(u8::MAX)`
+/// fallback would only trigger on a >255-seat table, which pkcore does not
+/// support.
+#[must_use]
+fn seat_count(table: &TableNoCell) -> u8 {
+    u8::try_from(table.seats.0.len()).unwrap_or(u8::MAX)
 }
 
 /// Builds a one-line description of `action` for the log.

@@ -38,8 +38,7 @@ fn render_header(hand: &HandHistory, street: usize, frame: &mut Frame, area: Rec
     let btn = hand
         .table
         .button
-        .map(|b| b.to_string())
-        .unwrap_or_else(|| "?".to_string());
+        .map_or_else(|| "?".to_string(), |b| b.to_string());
     let mut lines = vec![
         Line::from(vec![
             Span::styled(
@@ -52,8 +51,8 @@ fn render_header(hand: &HandHistory, street: usize, frame: &mut Frame, area: Rec
             Span::raw("  "),
             Span::raw(format!(
                 "btn={btn}  blinds={}/{}  ts={}",
-                hand.table.stakes.small_blind as usize,
-                hand.table.stakes.big_blind as usize,
+                chips(hand.table.stakes.small_blind),
+                chips(hand.table.stakes.big_blind),
                 hand.hand.timestamp.as_deref().unwrap_or("-"),
             )),
             Span::raw("  "),
@@ -72,7 +71,7 @@ fn render_header(hand: &HandHistory, street: usize, frame: &mut Frame, area: Rec
             "{:>4}  {:<22}  {:>5}  {}",
             p.seat,
             p.name,
-            p.stack as usize,
+            chips(p.stack),
             p.hole_cards.as_deref().unwrap_or("??"),
         )));
     }
@@ -107,8 +106,7 @@ fn render_street(hand: &HandHistory, street: usize, frame: &mut Frame, area: Rec
             streets
                 .flop
                 .as_ref()
-                .map(|s| s.cards.clone())
-                .unwrap_or_else(|| "-".into()),
+                .map_or_else(|| "-".into(), |s| s.cards.clone()),
             streets
                 .flop
                 .as_ref()
@@ -120,8 +118,7 @@ fn render_street(hand: &HandHistory, street: usize, frame: &mut Frame, area: Rec
             streets
                 .turn
                 .as_ref()
-                .map(|s| s.card.clone())
-                .unwrap_or_else(|| "-".into()),
+                .map_or_else(|| "-".into(), |s| s.card.clone()),
             streets
                 .turn
                 .as_ref()
@@ -133,8 +130,7 @@ fn render_street(hand: &HandHistory, street: usize, frame: &mut Frame, area: Rec
             streets
                 .river
                 .as_ref()
-                .map(|s| s.card.clone())
-                .unwrap_or_else(|| "-".into()),
+                .map_or_else(|| "-".into(), |s| s.card.clone()),
             streets
                 .river
                 .as_ref()
@@ -142,7 +138,10 @@ fn render_street(hand: &HandHistory, street: usize, frame: &mut Frame, area: Rec
                 .unwrap_or_default(),
             streets.river.as_ref().and_then(|s| s.pot),
         ),
-        _ => return render_results(hand, frame, area),
+        _ => {
+            render_results(hand, frame, area);
+            return;
+        }
     };
 
     let mut lines = vec![Line::from(vec![
@@ -158,7 +157,7 @@ fn render_street(hand: &HandHistory, street: usize, frame: &mut Frame, area: Rec
         ),
         Span::raw("   "),
         Span::styled(
-            format!("pot: {}", pot.map(|p| p as usize).unwrap_or(0)),
+            format!("pot: {}", pot.map_or(0, chips)),
             Style::default().fg(Color::Green),
         ),
     ])];
@@ -189,8 +188,7 @@ fn render_results(hand: &HandHistory, frame: &mut Frame, area: Rect) {
                 .players
                 .iter()
                 .find(|p| p.seat == r.seat)
-                .map(|p| p.name.as_str())
-                .unwrap_or("?");
+                .map_or("?", |p| p.name.as_str());
             let outcome = format!("{:?}", r.outcome).to_lowercase();
             let net = r.net.map(|n| format!("{n:+.0}")).unwrap_or_default();
             let hand_str = r.best_hand.as_deref().unwrap_or("");
@@ -212,18 +210,31 @@ fn format_action(a: &Action, hand: &HandHistory) -> String {
         .players
         .iter()
         .find(|p| p.seat == a.seat)
-        .map(|p| p.name.as_str())
-        .unwrap_or("?");
+        .map_or("?", |p| p.name.as_str());
     let verb = match a.action {
-        ActionType::Post => format!("posts {}", a.amount.map(|x| x as usize).unwrap_or(0)),
+        ActionType::Post => format!("posts {}", a.amount.map_or(0, chips)),
         ActionType::Fold => "folds".to_string(),
         ActionType::Check => "checks".to_string(),
-        ActionType::Call => format!("calls {}", a.amount.map(|x| x as usize).unwrap_or(0)),
-        ActionType::Bet => format!("bets {}", a.amount.map(|x| x as usize).unwrap_or(0)),
-        ActionType::Raise => format!("raises to {}", a.amount.map(|x| x as usize).unwrap_or(0)),
-        ActionType::AllIn => format!("ALL-IN ({})", a.amount.map(|x| x as usize).unwrap_or(0)),
+        ActionType::Call => format!("calls {}", a.amount.map_or(0, chips)),
+        ActionType::Bet => format!("bets {}", a.amount.map_or(0, chips)),
+        ActionType::Raise => format!("raises to {}", a.amount.map_or(0, chips)),
+        ActionType::AllIn => format!("ALL-IN ({})", a.amount.map_or(0, chips)),
     };
     format!("  {name:<22}  {verb}")
+}
+
+/// pkcore's hand-history YAML stores chip amounts as `f64` (to allow
+/// fractional chips in future variants); in practice every value is a
+/// non-negative integer. This helper performs the lossy cast in one place
+/// with the pedantic lints silenced.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+#[must_use]
+fn chips(v: f64) -> usize {
+    if v < 0.0 { 0 } else { v as usize }
 }
 
 fn street_name(s: usize) -> &'static str {
@@ -267,5 +278,13 @@ mod tests {
             assert!(l.starts_with(' '));
             assert!(l.ends_with(' '));
         }
+    }
+
+    #[test]
+    fn chips_clamps_negative_to_zero() {
+        assert_eq!(chips(-1.0), 0);
+        assert_eq!(chips(0.0), 0);
+        assert_eq!(chips(150.0), 150);
+        assert_eq!(chips(150.7), 150);
     }
 }

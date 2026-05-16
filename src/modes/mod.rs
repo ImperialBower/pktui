@@ -37,13 +37,8 @@ use rand::rngs::SmallRng;
 /// ```
 #[must_use]
 pub fn seeded_rng(seed: Option<u64>) -> (SmallRng, u64) {
-    match seed {
-        Some(s) => (SmallRng::seed_from_u64(s), s),
-        None => {
-            let s = rand::rng().random::<u64>();
-            (SmallRng::seed_from_u64(s), s)
-        }
-    }
+    let s = seed.unwrap_or_else(|| rand::rng().random::<u64>());
+    (SmallRng::seed_from_u64(s), s)
 }
 
 #[cfg(test)]

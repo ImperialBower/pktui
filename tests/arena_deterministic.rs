@@ -29,8 +29,8 @@ fn make(seed: u64) -> (ArenaState, LogPanel) {
 
 #[test]
 fn bot_lineup_is_reproducible_for_same_seed() {
-    let (a, _) = make(20260514);
-    let (b, _) = make(20260514);
+    let (a, _) = make(20_260_514);
+    let (b, _) = make(20_260_514);
     let names_a: Vec<String> = a.bots.iter().map(|b| b.name.clone()).collect();
     let names_b: Vec<String> = b.bots.iter().map(|b| b.name.clone()).collect();
     assert_eq!(

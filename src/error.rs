@@ -30,7 +30,7 @@ pub enum Error {
     Engine(pkcore::PKError),
     /// Wraps a terminal / crossterm IO error.
     Io(std::io::Error),
-    /// Wraps a YAML parse failure (HandCollection load).
+    /// Wraps a YAML parse failure (`HandCollection` load).
     Yaml(String),
     /// Wraps a TOML serialise/deserialise failure (config file).
     Toml(String),
