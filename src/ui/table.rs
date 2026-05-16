@@ -22,10 +22,15 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table as TableWidget};
 
-use crate::modes::play::HERO_SEAT;
+use crate::modes::play::{HERO_SEAT, ShowdownSeat};
 use crate::modes::{ArenaState, Awaiting, PlayState};
 
 /// Renders the table view for Play mode.
+///
+/// During [`Awaiting::HandComplete`], if the engine recorded a showdown
+/// snapshot, every active seat's hole cards are revealed in the table — even
+/// for hands the hero folded. (Showdown isn't recorded when only one player
+/// reached the end, since uncontested wins don't require a reveal.)
 pub fn render_table_view_play(state: &PlayState, frame: &mut Frame, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -36,9 +41,16 @@ pub fn render_table_view_play(state: &PlayState, frame: &mut Frame, area: Rect) 
         Awaiting::Human(s) => Some(s),
         _ => None,
     };
-    let rows = seat_rows(&state.session.table, Some(HERO_SEAT), active_seat, |seat| {
-        state.seat_name(seat)
-    });
+    let reveal_at_showdown = matches!(state.awaiting, Awaiting::HandComplete)
+        .then(|| state.last_showdown.as_deref())
+        .flatten();
+    let rows = seat_rows(
+        &state.session.table,
+        Some(HERO_SEAT),
+        active_seat,
+        reveal_at_showdown,
+        |seat| state.seat_name(seat),
+    );
     render_seats(frame, chunks[0], rows);
     render_board(&state.session.table, frame, chunks[1]);
 }
@@ -56,7 +68,7 @@ pub fn render_table_view_arena(state: &ArenaState, frame: &mut Frame, area: Rect
     } else {
         None
     };
-    let rows = seat_rows(&state.session.table, None, active_seat, |seat| {
+    let rows = seat_rows(&state.session.table, None, active_seat, None, |seat| {
         state.seat_name(seat)
     });
     render_seats(frame, chunks[0], rows);
@@ -73,12 +85,17 @@ struct SeatRow {
     folded: bool,
     is_hero: bool,
     is_active: bool,
+    /// Set when the row's hole cards come from a captured showdown reveal
+    /// rather than the live table — used to draw them in green so the user
+    /// notices the reveal.
+    revealed_at_showdown: bool,
 }
 
 fn seat_rows<F: Fn(u8) -> String>(
     table: &TableNoCell,
     hero_seat: Option<u8>,
     active_seat: Option<u8>,
+    showdown: Option<&[ShowdownSeat]>,
     name_of: F,
 ) -> Vec<SeatRow> {
     let btn = table.button;
@@ -96,15 +113,29 @@ fn seat_rows<F: Fn(u8) -> String>(
         let chips = seat_data.player.chips;
         let bet = seat_data.player.bet;
         let folded = !seat_data.player.is_in_hand();
-        let hole = if seat_data.cards.has_cards() {
-            if hero_seat == Some(i) || hero_seat.is_none() {
+
+        // Check the showdown snapshot first — those cards override even
+        // hidden bot cards. Snapshots only contain still-active seats so
+        // folded players never appear here.
+        let revealed = showdown.and_then(|s| s.iter().find(|r| r.seat == i));
+        let (hole, revealed_at_showdown) = if let Some(r) = revealed {
+            let class = r
+                .hand_class
+                .as_deref()
+                .map(|c| format!(" {c}"))
+                .unwrap_or_default();
+            (format!("{}{class}", r.hole), true)
+        } else if seat_data.cards.has_cards() {
+            let s = if hero_seat == Some(i) || hero_seat.is_none() {
                 seat_data.cards.sorted_display()
             } else {
                 "[??]".into()
-            }
+            };
+            (s, false)
         } else {
-            String::new()
+            (String::new(), false)
         };
+
         let tag = position_tag(i, btn, sb, bb)
             .map(str::to_owned)
             .unwrap_or_default();
@@ -118,6 +149,7 @@ fn seat_rows<F: Fn(u8) -> String>(
             folded,
             is_hero: hero_seat == Some(i),
             is_active: active_seat == Some(i),
+            revealed_at_showdown,
         });
     }
     out
@@ -143,7 +175,7 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: Vec<SeatRow>) {
         Constraint::Length(22),
         Constraint::Length(10),
         Constraint::Length(8),
-        Constraint::Length(10),
+        Constraint::Length(28),
         Constraint::Length(8),
     ];
 
@@ -165,12 +197,23 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: Vec<SeatRow>) {
             } else {
                 String::new()
             };
+            // Showdown reveals are drawn in bold green so the user's eye
+            // jumps straight to them when a hand resolves.
+            let hole_cell = if r.revealed_at_showdown {
+                Cell::from(r.hole.clone()).style(
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Cell::from(r.hole.clone())
+            };
             Row::new(vec![
                 Cell::from(format!("{}", r.seat)),
                 Cell::from(r.name.clone()),
                 Cell::from(format!("{}", r.chips)),
                 Cell::from(badge),
-                Cell::from(r.hole.clone()),
+                hole_cell,
                 Cell::from(r.tag.clone()),
             ])
             .style(style)

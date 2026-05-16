@@ -4,8 +4,12 @@
 //! current waiting state ([`Awaiting`]), and a numeric bet-amount field
 //! ([`BetField`]) the user can adjust before confirming a bet/raise.
 
+use std::str::FromStr;
 use std::time::{Duration, Instant};
 
+use pkcore::analysis::eval::Eval;
+use pkcore::arrays::HandRanker;
+use pkcore::arrays::seven::Seven;
 use pkcore::bot::profile::BotProfile;
 use pkcore::casino::action::PlayerAction;
 use pkcore::casino::game::ForcedBets;
@@ -166,6 +170,38 @@ pub const HERO_SEAT: u8 = 0;
 /// The display name shown for the human player.
 pub const HERO_NAME: &str = "You";
 
+/// One row of the showdown reveal — one per active (non-folded) seat at the
+/// moment the hand ends.
+///
+/// pktui captures this snapshot **before** calling
+/// [`PokerSession::end_hand`](pkcore::casino::session::PokerSession::end_hand),
+/// because that call resets the table and clears hole cards. The renderer
+/// then displays the snapshot during [`Awaiting::HandComplete`] so the user
+/// can see what every active player held — even hands they folded in.
+///
+/// `eval` is `Some` only when the board reached the river (5 community cards),
+/// which is the only moment a 7-card evaluation is well-defined.
+///
+/// # Examples
+///
+/// ```
+/// use pktui::modes::play::ShowdownSeat;
+/// let s = ShowdownSeat { seat: 1, name: "gto".into(), hole: "Ah Kh".into(), hand_class: Some("Two Pair".into()) };
+/// assert_eq!(s.seat, 1);
+/// ```
+#[derive(Debug, Clone)]
+pub struct ShowdownSeat {
+    /// Seat index (0-8 in 9-handed Hold'em).
+    pub seat: u8,
+    /// Display name (hero label or bot profile name).
+    pub name: String,
+    /// Hole cards as a display string, e.g. `"Ah Kh"`.
+    pub hole: String,
+    /// Best 5-card hand class (e.g. `"Pair of Kings"`), if a full 5-card
+    /// board was available to evaluate against.
+    pub hand_class: Option<String>,
+}
+
 /// All state needed to drive Play mode.
 pub struct PlayState {
     /// The live engine session.
@@ -185,6 +221,9 @@ pub struct PlayState {
     pub speed: Duration,
     /// Resolved RNG seed (so the user can reproduce the session).
     pub seed: u64,
+    /// Snapshot of the most recent showdown — `Some` while
+    /// [`Awaiting::HandComplete`] is showing the reveal, `None` otherwise.
+    pub last_showdown: Option<Vec<ShowdownSeat>>,
 }
 
 impl PlayState {
@@ -253,6 +292,7 @@ impl PlayState {
             last_step_at: Instant::now() - Duration::from_secs(1),
             speed: Duration::from_millis(600),
             seed,
+            last_showdown: None,
         })
     }
 
@@ -351,8 +391,27 @@ impl PlayState {
                 Ok(true)
             }
             SessionStep::HandComplete => {
-                let winnings = self.session.end_hand()?;
+                // Capture the showdown reveal BEFORE end_hand() resets the
+                // table and zeros every seat's hole cards. Only meaningful
+                // when 2+ seats are still in the hand — a single-seat win
+                // (everyone else folded) doesn't show cards.
                 let n = self.session.table.seats.0.len() as u8;
+                let showdown = capture_showdown(&self.session.table, n, |s| self.seat_name(s));
+                if let Some(rows) = &showdown {
+                    for row in rows {
+                        let suffix = match &row.hand_class {
+                            Some(c) => format!(" — {c}"),
+                            None => String::new(),
+                        };
+                        log.push(
+                            Severity::Info,
+                            format!("Showdown: {} shows [{}]{suffix}", row.name, row.hole),
+                        );
+                    }
+                }
+                self.last_showdown = showdown;
+
+                let winnings = self.session.end_hand()?;
                 for w in winnings.vec() {
                     let chips = w.equity.chips;
                     for seat in 0..n {
@@ -399,6 +458,7 @@ impl PlayState {
         if !matches!(self.awaiting, Awaiting::HandComplete) {
             return Ok(());
         }
+        self.last_showdown = None;
         self.session.start_hand()?;
         log.push(
             Severity::Info,
@@ -473,6 +533,58 @@ fn severity_for(action: PlayerAction) -> Severity {
         PlayerAction::Check | PlayerAction::Call => Severity::Info,
         PlayerAction::Bet(_) | PlayerAction::Raise(_) | PlayerAction::AllIn => Severity::Action,
     }
+}
+
+/// Snapshots every active (non-folded) seat's hole cards just before
+/// [`PokerSession::end_hand`](pkcore::casino::session::PokerSession::end_hand)
+/// would clear them.
+///
+/// Returns `None` when fewer than two players are still active — in that case
+/// nobody is required to show, so we don't reveal anything.
+///
+/// When the board is complete (5 community cards), each row also carries the
+/// 5-card hand class derived from `Seven::hand_rank_and_hand`.
+#[must_use]
+pub fn capture_showdown<F: Fn(u8) -> String>(
+    table: &TableNoCell,
+    n_seats: u8,
+    name_of: F,
+) -> Option<Vec<ShowdownSeat>> {
+    let mut active: Vec<ShowdownSeat> = (0..n_seats)
+        .filter_map(|i| {
+            let s = table.seats.get_seat(i)?;
+            if s.is_empty() || !s.player.is_in_hand() || !s.cards.has_cards() {
+                return None;
+            }
+            let hole = s.cards.sorted_display();
+            Some(ShowdownSeat {
+                seat: i,
+                name: name_of(i),
+                hole,
+                hand_class: None,
+            })
+        })
+        .collect();
+
+    if active.len() < 2 {
+        return None;
+    }
+
+    let board = table.board.to_string();
+    if board.split_whitespace().count() == 5 {
+        for row in &mut active {
+            row.hand_class = hand_class(&row.hole, &board);
+        }
+    }
+
+    Some(active)
+}
+
+fn hand_class(hole: &str, board: &str) -> Option<String> {
+    let seven = Seven::from_str(&format!("{hole} {board}")).ok()?;
+    let (hand_rank, hand) = seven.hand_rank_and_hand();
+    let eval = Eval::new(hand_rank, hand);
+    Some(format!("{:?}", eval.hand_rank.class))
 }
 
 #[cfg(test)]

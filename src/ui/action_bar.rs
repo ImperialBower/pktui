@@ -29,8 +29,8 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         AppMode::Arena(_) => vec![arena_hints()],
         AppMode::Replay(_) => vec![replay_hints()],
     };
-    let widget =
-        Paragraph::new(Text::from(lines)).block(Block::default().borders(Borders::ALL).title(" Action "));
+    let widget = Paragraph::new(Text::from(lines))
+        .block(Block::default().borders(Borders::ALL).title(" Action "));
     frame.render_widget(widget, area);
 }
 
@@ -62,12 +62,12 @@ pub(crate) fn preset_values(p: &PlayState, seat: u8) -> (usize, usize, usize) {
 fn play_hints(p: &PlayState) -> Vec<Line<'static>> {
     match p.awaiting {
         Awaiting::HandComplete => vec![
-            Line::from(vec![
-                Span::styled(
-                    "Hand complete",
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
-                ),
-            ]),
+            Line::from(vec![Span::styled(
+                "Hand complete",
+                Style::default()
+                    .fg(Color::Green)
+                    .add_modifier(Modifier::BOLD),
+            )]),
             Line::from(vec![
                 keystyle(" Enter "),
                 Span::raw(" next hand   "),
@@ -89,10 +89,7 @@ fn play_hints(p: &PlayState) -> Vec<Line<'static>> {
 
             // Line 1: prominent bet amount + preset values.
             let line1 = Line::from(vec![
-                Span::styled(
-                    format!("{verb}: "),
-                    Style::default().fg(Color::Gray),
-                ),
+                Span::styled(format!("{verb}: "), Style::default().fg(Color::Gray)),
                 Span::styled(
                     format!("[ {:>6} ]", p.bet.amount()),
                     Style::default()
