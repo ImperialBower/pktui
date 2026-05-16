@@ -1,0 +1,329 @@
+//! Arena mode: nine bots, watch-only.
+//!
+//! Identical to [`PlayState`](crate::modes::PlayState) except seat 0 is also
+//! a bot — there is no [`Awaiting::Human`](crate::modes::Awaiting::Human)
+//! state. The user controls only the speed (`+`/`-` to adjust) and quitting.
+
+use std::time::{Duration, Instant};
+
+use pkcore::bot::profile::BotProfile;
+use pkcore::casino::game::ForcedBets;
+use pkcore::casino::session::{PokerSession, SessionStep};
+use pkcore::casino::table_no_cell::{PlayerNoCell, SeatNoCell, SeatsNoCell, TableNoCell};
+use rand::rngs::SmallRng;
+use rand::seq::SliceRandom;
+
+use crate::cli::ArenaArgs;
+use crate::error::Result;
+use crate::log_panel::{LogPanel, Severity};
+use crate::modes::play::describe_action;
+use crate::modes::seeded_rng;
+
+/// Phase of the watch-only arena.
+///
+/// # Examples
+///
+/// ```
+/// use pktui::modes::arena::ArenaPhase;
+/// assert_eq!(ArenaPhase::default(), ArenaPhase::Running);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ArenaPhase {
+    /// Bots are actively dealing / betting.
+    #[default]
+    Running,
+    /// Hand finished; will auto-deal on next tick.
+    HandComplete,
+    /// Only one funded seat remains.
+    SessionOver,
+}
+
+/// All state needed to drive Arena mode.
+pub struct ArenaState {
+    /// The live engine session.
+    pub session: PokerSession,
+    /// The 9 bot profiles, indexed by seat.
+    pub bots: Vec<BotProfile>,
+    /// RNG used for bot decisions.
+    pub rng: SmallRng,
+    /// Current phase.
+    pub phase: ArenaPhase,
+    /// Wall-clock instant of the last applied bot action.
+    pub last_step_at: Instant,
+    /// Minimum delay between consecutive bot actions.
+    pub speed: Duration,
+    /// Resolved RNG seed.
+    pub seed: u64,
+}
+
+impl ArenaState {
+    /// Initialises an Arena session with 9 bots seated.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Engine`] if pkcore rejects the table or the
+    /// initial deal.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::cli::ArenaArgs;
+    /// use pktui::log_panel::LogPanel;
+    /// use pktui::modes::ArenaState;
+    ///
+    /// let mut log = LogPanel::new();
+    /// let s = ArenaState::new(&ArenaArgs::default(), &mut log).unwrap();
+    /// assert_eq!(s.bots.len(), 9);
+    /// ```
+    pub fn new(args: &ArenaArgs, log: &mut LogPanel) -> Result<Self> {
+        let (mut rng, seed) = seeded_rng(args.game.seed);
+        let mut pool = BotProfile::default_profiles();
+        pool.push(BotProfile::joker());
+        pool.shuffle(&mut rng);
+        let bots: Vec<BotProfile> = pool.into_iter().take(9).collect();
+
+        let seats: Vec<SeatNoCell> = bots
+            .iter()
+            .map(|b| {
+                SeatNoCell::new(PlayerNoCell::new_with_chips(
+                    b.name.clone(),
+                    args.game.chips,
+                ))
+            })
+            .collect();
+
+        let table = TableNoCell::nlh_from_seats(
+            SeatsNoCell::new(seats),
+            ForcedBets::new(args.game.small_blind, args.game.big_blind),
+        );
+
+        let mut session = PokerSession::new(table);
+        session.start_hand()?;
+        log.push(
+            Severity::Info,
+            format!(
+                "Arena started: blinds {}/{} starting {} chips, seed={seed}",
+                args.game.small_blind, args.game.big_blind, args.game.chips
+            ),
+        );
+        log.push(Severity::Info, "Hand 1 dealt".to_string());
+
+        Ok(Self {
+            session,
+            bots,
+            rng,
+            phase: ArenaPhase::Running,
+            last_step_at: Instant::now() - Duration::from_secs(1),
+            speed: Duration::from_millis(args.speed_ms),
+            seed,
+        })
+    }
+
+    /// Returns the seat's bot name.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::cli::ArenaArgs;
+    /// use pktui::log_panel::LogPanel;
+    /// use pktui::modes::ArenaState;
+    ///
+    /// let mut log = LogPanel::new();
+    /// let s = ArenaState::new(&ArenaArgs::default(), &mut log).unwrap();
+    /// assert_eq!(s.seat_name(0), s.bots[0].name);
+    /// ```
+    #[must_use]
+    pub fn seat_name(&self, seat: u8) -> String {
+        self.bots
+            .get(seat as usize)
+            .map(|b| b.name.clone())
+            .unwrap_or_else(|| format!("seat {seat}"))
+    }
+
+    /// Speeds bots up (smaller delay) by 100 ms, floored at 50 ms.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use pktui::cli::ArenaArgs;
+    /// use pktui::log_panel::LogPanel;
+    /// use pktui::modes::ArenaState;
+    ///
+    /// let mut log = LogPanel::new();
+    /// let mut s = ArenaState::new(&ArenaArgs::default(), &mut log).unwrap();
+    /// s.speed = Duration::from_millis(800);
+    /// s.speed_up();
+    /// assert_eq!(s.speed, Duration::from_millis(700));
+    /// ```
+    pub fn speed_up(&mut self) {
+        let ms = self.speed.as_millis() as u64;
+        self.speed = Duration::from_millis(ms.saturating_sub(100).max(50));
+    }
+
+    /// Slows bots down by 100 ms, capped at 5000 ms.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use std::time::Duration;
+    /// use pktui::cli::ArenaArgs;
+    /// use pktui::log_panel::LogPanel;
+    /// use pktui::modes::ArenaState;
+    ///
+    /// let mut log = LogPanel::new();
+    /// let mut s = ArenaState::new(&ArenaArgs::default(), &mut log).unwrap();
+    /// s.speed = Duration::from_millis(800);
+    /// s.speed_down();
+    /// assert_eq!(s.speed, Duration::from_millis(900));
+    /// ```
+    pub fn speed_down(&mut self) {
+        let ms = self.speed.as_millis() as u64;
+        self.speed = Duration::from_millis((ms + 100).min(5000));
+    }
+
+    /// Drives the arena forward by one step (paced by [`Self::speed`]).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Engine`] on any pkcore failure.
+    pub fn tick(&mut self, log: &mut LogPanel) -> Result<bool> {
+        if matches!(self.phase, ArenaPhase::SessionOver) {
+            return Ok(false);
+        }
+        if self.last_step_at.elapsed() < self.speed {
+            return Ok(false);
+        }
+
+        if matches!(self.phase, ArenaPhase::HandComplete) {
+            self.session.start_hand()?;
+            log.push(
+                Severity::Info,
+                format!("Hand {} dealt", self.session.hand_number),
+            );
+            self.phase = ArenaPhase::Running;
+            self.last_step_at = Instant::now();
+            return Ok(true);
+        }
+
+        match self.session.next_step() {
+            SessionStep::PlayerToAct(seat) => {
+                let action =
+                    self.bots[seat as usize].decide(&self.session.table, seat, &mut self.rng);
+                let desc = describe_action(&self.session.table, seat, action);
+                self.session.apply_action(seat, action)?;
+                log.push(
+                    severity_for_action(action),
+                    format!("{}: {desc}", self.seat_name(seat)),
+                );
+                self.last_step_at = Instant::now();
+                Ok(true)
+            }
+            SessionStep::StreetAdvanced => {
+                let board = self.session.table.board.to_string();
+                log.push(Severity::Info, format!("Board: {board}"));
+                self.last_step_at = Instant::now();
+                Ok(true)
+            }
+            SessionStep::HandComplete => {
+                let winnings = self.session.end_hand()?;
+                let n = self.session.table.seats.0.len() as u8;
+                for w in winnings.vec() {
+                    let chips = w.equity.chips;
+                    for seat in 0..n {
+                        if w.equity.seats.contains(seat) {
+                            log.push(
+                                Severity::Win,
+                                format!("{} wins {} chips", self.seat_name(seat), chips),
+                            );
+                        }
+                    }
+                }
+                self.session.table.button_up();
+                let busted = self.session.eliminate_busted();
+                for s in busted {
+                    log.push(Severity::Error, format!("{} eliminated", self.seat_name(s)));
+                }
+                if self.session.count_funded() < 2 {
+                    log.push(Severity::Info, "Arena over. Press q to quit.".to_string());
+                    self.phase = ArenaPhase::SessionOver;
+                } else {
+                    self.phase = ArenaPhase::HandComplete;
+                }
+                self.last_step_at = Instant::now();
+                Ok(true)
+            }
+        }
+    }
+}
+
+fn severity_for_action(action: pkcore::casino::action::PlayerAction) -> Severity {
+    use pkcore::casino::action::PlayerAction::*;
+    match action {
+        Fold => Severity::Fold,
+        Check | Call => Severity::Info,
+        Bet(_) | Raise(_) | AllIn => Severity::Action,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::ArenaArgs;
+
+    fn arena_with_seed(seed: u64) -> ArenaState {
+        let mut log = LogPanel::new();
+        let mut args = ArenaArgs::default();
+        args.game.seed = Some(seed);
+        ArenaState::new(&args, &mut log).unwrap()
+    }
+
+    #[test]
+    fn nine_bots_seated() {
+        let s = arena_with_seed(1);
+        assert_eq!(s.session.table.seats.0.len(), 9);
+    }
+
+    #[test]
+    fn deterministic_for_same_seed() {
+        let a: Vec<_> = arena_with_seed(5)
+            .bots
+            .iter()
+            .map(|b| b.name.clone())
+            .collect();
+        let b: Vec<_> = arena_with_seed(5)
+            .bots
+            .iter()
+            .map(|b| b.name.clone())
+            .collect();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn speed_controls_clamp() {
+        let mut s = arena_with_seed(3);
+        s.speed = Duration::from_millis(60);
+        s.speed_up();
+        assert!(s.speed >= Duration::from_millis(50));
+        s.speed = Duration::from_millis(4990);
+        s.speed_down();
+        assert!(s.speed <= Duration::from_millis(5000));
+    }
+
+    #[test]
+    fn ticks_eventually_complete_a_hand() {
+        let mut s = arena_with_seed(11);
+        let mut log = LogPanel::new();
+        s.speed = Duration::from_millis(0);
+        for _ in 0..500 {
+            if !matches!(s.phase, ArenaPhase::Running) {
+                break;
+            }
+            let _ = s.tick(&mut log);
+        }
+        assert!(matches!(
+            s.phase,
+            ArenaPhase::HandComplete | ArenaPhase::SessionOver
+        ));
+    }
+}

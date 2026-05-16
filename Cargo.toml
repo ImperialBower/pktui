@@ -1,6 +1,36 @@
 [package]
 name = "pktui"
-version = "0.1.0"
+version = "0.0.2"
 edition = "2024"
+rust-version = "1.94.1"
+description = "Ratatui terminal client for the pkcore poker engine."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/ImperialBower/pktui"
 
 [dependencies]
+ratatui = "0.30.0"
+crossterm = "0.29"
+clap = { version = "4.6", features = ["derive"] }
+color-eyre = "0.6"
+rand = "0.9"
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+dirs = "5"
+pkcore = { version = "0.0.57", features = ["bot-profiles", "hand-histories"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+# While iterating on the engine and the UI together, override the published
+# pkcore with the local sibling checkout. Drop or comment out this section to
+# build against crates.io exclusively.
+#[patch.crates-io]
+#pkcore = { path = "../pkcore" }
+
+[[bin]]
+name = "pktui"
+path = "src/main.rs"
+
+[lib]
+name = "pktui"
+path = "src/lib.rs"

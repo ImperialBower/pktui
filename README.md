@@ -1,189 +1,119 @@
-[![Build and Test](https://github.com/devplaybooks/rs_blank/actions/workflows/CI.yaml/badge.svg)](https://github.com/devplaybooks/rs_blank/actions/workflows/CI.yaml)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-4baaaa.svg)](CODE_OF_CONDUCT.md)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue?style=flat-square)](LICENSE-APACHE)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0.en.html)
-[![License: MIT](https://img.shields.io/badge/license-MIT-blue?style=flat-square)](LICENSE-MIT)
-[![Crates.io Version](https://img.shields.io/crates/v/rs_blank_example.svg)](https://crates.io/crates/rs_blank_example)
-[![Rustdocs](https://docs.rs/rs_blank_example/badge.svg)](https://docs.rs/rs_blank_example/)
+# pktui
 
----
+A [ratatui](https://ratatui.rs) terminal client for the
+[pkcore](https://github.com/ImperialBower/pkcore) poker engine.
 
-# Rust Blank
+`pktui` is the terminal sibling of
+[pkarena0-web](https://github.com/ImperialBower/pkarena0-web): same engine,
+same three modes (Play / Arena / Replay), same bot roster, swap the SVG
+table for a ratatui one.
 
-Starting Point for Rust projects. Feel free to adapt as needed.
+## Install / run
 
-One will notice the lack of any Rust code in this template. That is intentional.
-This is why the CI badge up above is red.
-This is a collection of supporting files that I find useful beyond what is
-provided by [cargo init](https://doc.rust-lang.org/cargo/commands/cargo-init.html).
-Rather than try to replace what it does, I just wanted a way to add the things
-that I find useful.
+```sh
+# from the workspace root, with ../pkcore checked out alongside ../pktui
+cargo run --release            # default: Play mode (you vs 8 bots)
+cargo run --release -- play
+cargo run --release -- arena --speed-ms 400
+cargo run --release -- replay path/to/session.yaml
+```
 
-This template is designed to be
-[cruel to be kind in the right measure](https://www.youtube.com/watch?v=b0l3QWUXVho).
+`pktui` uses Rust edition 2024 and pins `rust-version = 1.94.1`. The
+[`Cargo.toml`](Cargo.toml) declares `pkcore` as a `crates.io` dependency but
+overrides it with `[patch.crates-io] pkcore = { path = "../pkcore" }` so
+local engine work is picked up without publishing. Comment out the patch
+section to build against the published crate exclusively.
 
-You can see an example of it in use at [devplaybooks/rust_blank_example](https://github.com/devplaybooks/rust_blank_example).
+## Modes
 
-## How to use it
+| Mode    | Subcommand                | Description                                          |
+|---------|---------------------------|------------------------------------------------------|
+| Play    | `pktui play`              | One human at seat 0, eight bots at seats 1–8.        |
+| Arena   | `pktui arena`             | Nine bots, watch-only. Use `+` / `-` to adjust pace. |
+| Replay  | `pktui replay <FILE>`     | Step through a saved `HandCollection` YAML file.     |
 
-* Use the template. (**Note that your first build will fail because there is no code yet.**)
-* Check out your new repo locally.
-* Navigate into the repo
-* Run [cargo init](https://doc.rust-lang.org/cargo/commands/cargo-init.html)
-  * If you want a library instead of an executable, run `cargo init --lib`
+All live modes accept `--seed N`, `--small-blind N`, `--big-blind N`,
+`--chips N`. Arena additionally accepts `--speed-ms N` (default 800).
 
-## What's in the box?
+## Keyboard
 
-* Choice of licenses
-* .rustfmt.toml file
-* GitHub CI Actions
-* [cargo-deny](https://crates.io/crates/cargo-deny) dependency graph linter
-* GNU Makefile
-* GitHub [VSCode Dev Container](https://code.visualstudio.com/docs/devcontainers/containers) that also acts as an online GitHub Codespace courtesy of [codespaces-examples](https://github.com/codespaces-examples/rust)
+| Mode       | Key            | Action                                                          |
+|------------|----------------|-----------------------------------------------------------------|
+| Global     | `?`            | Toggle help overlay                                             |
+| Global     | `q` / `Ctrl+C` | Quit                                                            |
+| Play       | `f`            | Fold                                                            |
+| Play       | `k`            | Check                                                           |
+| Play       | `c`            | Call                                                            |
+| Play       | `a`            | All-in                                                          |
+| Play       | `b` / `r`      | Confirm bet/raise using the current bet amount                  |
+| Play       | `Enter`        | Confirm bet/raise — or deal next hand between hands             |
+| Play       | `1` / `2` / `3`| Set bet to min / ½-pot / pot                                    |
+| Play       | digits         | Type bet amount digit-by-digit                                  |
+| Play       | `+` / `-`      | Bump bet amount by 50                                           |
+| Play       | `Backspace`    | Delete last digit of bet amount                                 |
+| Arena      | `+` / `-`      | Faster / slower bots (100 ms steps)                             |
+| Replay     | `n` / `→`      | Next street                                                     |
+| Replay     | `p` / `←`      | Previous street                                                 |
+| Replay     | `N` / `Enter`  | Next hand                                                       |
+| Replay     | `P`            | Previous hand                                                   |
 
-### Licenses
+## Config file
 
-I've added all the licenses I generally use for maximum flexibility.
-
-* [Apache License 2.0](https://www.apache.org/licenses/LICENSE-2.0)
-* [GPL 3.0 License](https://www.gnu.org/licenses/gpl-3.0.en.html)
-* [MIT License](https://opensource.org/license/mit/)
-
-### My version of Robbepop's [.rustfmt.toml file](https://gist.github.com/Robbepop/f88d896f859712384039813fab939172)
-
-It allows you to customize how the [rstfmt cargo command](https://github.com/rust-lang/rustfmt)
-does its job. In my case, that means changing the max width of a file from 80
-characters to 100:
+On first save, `pktui` writes
+`$XDG_CONFIG_HOME/pktui/config.toml` (typically
+`~/.config/pktui/config.toml` on Linux/macOS,
+`%APPDATA%\pktui\config.toml` on Windows):
 
 ```toml
-# Ideal width of each line.
-# Default: 80
-max_width = 100
+small_blind = 50
+big_blind = 100
+chips = 10000
+arena_speed_ms = 800
+play_speed_ms = 600
 ```
 
-### Makefile
+Anything on the command line overrides the config.
 
-This program includes a [GNU Make](https://www.gnu.org/software/make/) [Makefile](Makefile) of common commands. 
+## Architecture
 
-To get all the commands, run:
+`pktui` follows an Elm-style Model / Message / Update loop:
 
-```shell
-make help
+```text
+crossterm event ──► Event ──► event_to_msg ──► Msg ──► update(app, msg) ──► App
+                                                                            │
+                                                                            ▼
+                                                                       ui::view ──► ratatui Frame
 ```
 
-To run through the full build process, just run:
+* [`src/app.rs`](src/app.rs) — the `App` model, plus the `AppMode` enum that
+  dispatches to per-mode state.
+* [`src/modes/`](src/modes/) — `PlayState`, `ArenaState`, `ReplayState`.
+* [`src/update.rs`](src/update.rs) — `Msg` enum and the `update` reducer.
+* [`src/event.rs`](src/event.rs) — crossterm polling with tick timer for bot
+  pacing.
+* [`src/ui/`](src/ui/) — render functions (`table`, `action_bar`, `log_view`,
+  `help`, `replay_view`).
+* [`src/main.rs`](src/main.rs) — thin entry point: parse CLI, init terminal,
+  run loop, restore terminal on exit.
 
-```shell
-make
+The engine boundary is small: pktui reads `session.table` for rendering,
+calls `session.next_step()` to advance, and calls `session.apply_action(seat,
+PlayerAction)` for both bot and human decisions.
+
+## Development
+
+```sh
+cargo build                  # build the binary + library
+cargo test                   # unit + integration tests
+cargo test --doc             # doc tests (CLAUDE.md requires one per public fn)
+make ayce                    # full pipeline: fmt + test + clippy + deny + docs
 ```
 
-The default `make` runs the following tasks:
+CLAUDE.md in the repo root captures the coding conventions (every public
+function has a unit test and a doc test, `unwrap`/`expect`/`panic` are
+forbidden outside tests, etc.). New code should follow them.
 
-* `cargo fmt`
-* `cargo clean`
-* `cargo build`
-* `cargo test`
-* `cargo clippy` with `clippy::pedantic` lint settings
-* `cargo deny` checks
-* `cargo doc --no-deps`
+## Licence
 
-To open the generated docs in your browser:
-
-```shell
-❯ make docs
-```
-
-### David Tolnay's [Rust Toolchain GitHub Action](https://github.com/dtolnay/rust-toolchain)
-
-I've been a big fan of [svartalf's](https://github.com/svartalf) [actions-rs libraries](https://github.com/actions-rs),
-but it doesn't seem to be maintained, and I'm getting [warnings](https://github.blog/changelog/2022-09-22-github-actions-all-actions-will-begin-running-on-node16-instead-of-node12/)
-now from GitHub, so I'm switching. It's surprisingly simple and flexible.
-
-This workflow contains a cron schedule to run [every 1st day of the month](https://crontab.guru/#40_1_1_*_*).
-Note that [GitHub says](https://docs.github.com/en/actions/managing-workflow-runs/disabling-and-enabling-a-workflow#article-contents)
-that it will disable scheduled workflows on forked repos or if there has been no
-activity in 60 days.
-
-If you're not familiar with [GitHub Actions](https://github.com/features/actions),
-I recommend that you check them out.
-
-[.github/workflows/CI.yaml](/.github/workflows/CI.yaml) contains the following jobs:
-
-#### test
-
-Tests the code against Rust's [stable](https://github.com/rust-lang/rust/blob/master/RELEASES.md), beta, and nightly [channels](https://rust-lang.github.io/rustup/concepts/channels.html),
-as well as the 1.85.0 release of Rust.
-
-#### clippy
-
-I like my [Clippy lints](https://doc.rust-lang.org/clippy/) to be [dialed up to 11](https://www.youtube.com/watch?v=F7IZZXQ89Oc),
-so it's configured at the pedantic level. Feel free to dial it down as you see fit.
-
-Note that if you don't add `#![warn(clippy::pedantic)]` at the beginning of your
-crate, Clippy will pass locally, but fail when you push. For example:
-
-```rust
-#![warn(clippy::pedantic)]
-
-fn main() {
-  println!("Hello, world!");
-}
-```
-
-#### fmt
-
-Fails the build if the developer didn't run
-[rustfmt](https://github.com/rust-lang/rustfmt) against the build.
-
-#### doc
-
-Runs [`cargo doc`](https://doc.rust-lang.org/cargo/commands/cargo-doc.html)
-on the repo and fails if there are any warnings.
-
-#### miri
-
-I had never heard of [Miri](https://github.com/rust-lang/miri) before I saw it
-in [this example](https://github.com/dtolnay/thiserror/blob/master/.github/workflows/ci.yml),
-but it looks interesting, so why not?
-
-Miri is a heavy test, so it may be wise to remove it.
-
-#### ~~outdated~~
-
-~~Runs the [outdated cargo subcommand](https://github.com/kbknapp/cargo-outdated)
-against the repo. Fails the build if you have any outdated dependencies in your
-project. If you keep the cron schedule, it will check every month to see if any
-of your dependencies are outdated.~~
-
-Outdated isn't compatible with the Rust 2024 edition. There's an 
-[open issue](https://github.com/kbknapp/cargo-outdated/issues/419) for it.
-
-### Dev Container
-
-The Docker image used is based on Microsoft's 
-[Rust Dev Container image](https://github.com/devcontainers/images/tree/main/src/rust). It includes:
-
-- [Evcxr Rust REPL](https://github.com/evcxr/evcxr/blob/main/evcxr_repl/README.md)
-- [Rustup wasm32-unknown-unknown target](https://doc.rust-lang.org/nightly/rustc/platform-support/wasm32-unknown-unknown.html)
-
-### AI Assistant Instructions
-
-This repository includes instruction files for AI coding assistants. They define project-specific expectations for behavior, code style, and testing.
-
-- [`CLAUDE.md`](./CLAUDE.md) contains instructions used by Claude-compatible tooling.
-- [`.github/copilot-instructions.md`](./.github/copilot-instructions.md) contains repository custom instructions used by GitHub Copilot.
-
-Reference information:
-
-- Claude Code project instructions: <https://docs.anthropic.com/en/docs/claude-code/settings#memory>
-- GitHub Copilot repository custom instructions: <https://docs.github.com/en/copilot/how-tos/configure-custom-instructions/add-repository-instructions>
-- Markdown reference (CommonMark): <https://spec.commonmark.org/>
-
-## Rust Resources
-
-* [Rust Programming Language](https://doc.rust-lang.org/book/)
-* [rustup.rs](https://github.com/rust-lang/rustup)
-* [Cargo Guide](https://doc.rust-lang.org/cargo/)
-* [Rust Cookbook](https://rust-lang-nursery.github.io/rust-cookbook/) ([git](https://github.com/rust-lang-nursery/rust-cookbook))
-* [Asynchronous Programming in Rust](https://rust-lang.github.io/async-book/index.html)
-* [The Little Book of Rust Books](https://lborb.github.io/book/)
+Triple-licensed under Apache 2.0, GPL 3.0, or MIT (your choice), matching
+the upstream `pkcore` engine.

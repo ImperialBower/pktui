@@ -1,0 +1,578 @@
+//! Play mode: one human at seat 0, eight bots at seats 1-8.
+//!
+//! The mode owns the live [`PokerSession`], the bot roster, an RNG, the
+//! current waiting state ([`Awaiting`]), and a numeric bet-amount field
+//! ([`BetField`]) the user can adjust before confirming a bet/raise.
+
+use std::time::{Duration, Instant};
+
+use pkcore::bot::profile::BotProfile;
+use pkcore::casino::action::PlayerAction;
+use pkcore::casino::game::ForcedBets;
+use pkcore::casino::session::{PokerSession, SessionStep};
+use pkcore::casino::table_no_cell::{PlayerNoCell, SeatNoCell, SeatsNoCell, TableNoCell};
+use rand::rngs::SmallRng;
+use rand::seq::SliceRandom;
+
+use crate::cli::PlayArgs;
+use crate::error::Result;
+use crate::log_panel::{LogPanel, Severity};
+use crate::modes::seeded_rng;
+
+/// What the engine is currently waiting on.
+///
+/// `Bot` means an automated decision is pending and should fire on the next
+/// tick (paced so the user can read each move). `Human(seat)` means the UI
+/// must collect a keystroke. `HandComplete` is the brief pause between hands
+/// where results are visible. `SessionOver` is terminal — the human busted
+/// or only one funded seat remains.
+///
+/// # Examples
+///
+/// ```
+/// use pktui::modes::Awaiting;
+/// let a = Awaiting::Bot;
+/// matches!(a, Awaiting::Bot);
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Awaiting {
+    /// A bot will act on the next tick.
+    Bot,
+    /// Waiting for a human keystroke; seat is next-to-act.
+    Human(u8),
+    /// Hand finished; press Enter to deal next.
+    HandComplete,
+    /// Session over (hero busted or only one player left).
+    SessionOver,
+}
+
+/// Numeric bet/raise amount the user is composing.
+///
+/// The TUI shows this as `[ Bet: 200 ]` next to the action bar. Pre-set
+/// hotkeys (`1` = min, `2` = ½-pot, `3` = pot) overwrite the value;
+/// `+`/`-` and digit keys adjust it.
+///
+/// # Examples
+///
+/// ```
+/// use pktui::modes::BetField;
+/// let mut b = BetField::default();
+/// b.set(200);
+/// assert_eq!(b.amount(), 200);
+/// b.bump(50);
+/// assert_eq!(b.amount(), 250);
+/// ```
+#[derive(Debug, Clone, Copy, Default)]
+pub struct BetField {
+    amount: usize,
+}
+
+impl BetField {
+    /// Returns the current amount.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::modes::BetField;
+    /// assert_eq!(BetField::default().amount(), 0);
+    /// ```
+    #[must_use]
+    pub fn amount(&self) -> usize {
+        self.amount
+    }
+
+    /// Replaces the amount.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::modes::BetField;
+    /// let mut b = BetField::default();
+    /// b.set(123);
+    /// assert_eq!(b.amount(), 123);
+    /// ```
+    pub fn set(&mut self, n: usize) {
+        self.amount = n;
+    }
+
+    /// Adds `delta` chips to the amount, saturating at `usize::MAX`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::modes::BetField;
+    /// let mut b = BetField::default();
+    /// b.set(100);
+    /// b.bump(25);
+    /// assert_eq!(b.amount(), 125);
+    /// ```
+    pub fn bump(&mut self, delta: usize) {
+        self.amount = self.amount.saturating_add(delta);
+    }
+
+    /// Subtracts `delta` chips, saturating at zero.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::modes::BetField;
+    /// let mut b = BetField::default();
+    /// b.set(100);
+    /// b.cut(40);
+    /// assert_eq!(b.amount(), 60);
+    /// b.cut(999);
+    /// assert_eq!(b.amount(), 0);
+    /// ```
+    pub fn cut(&mut self, delta: usize) {
+        self.amount = self.amount.saturating_sub(delta);
+    }
+
+    /// Appends a single decimal digit (0-9) to the amount, ignoring overflow.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::modes::BetField;
+    /// let mut b = BetField::default();
+    /// b.push_digit(2);
+    /// b.push_digit(5);
+    /// assert_eq!(b.amount(), 25);
+    /// ```
+    pub fn push_digit(&mut self, d: u8) {
+        if d > 9 {
+            return;
+        }
+        self.amount = self.amount.saturating_mul(10).saturating_add(d as usize);
+    }
+
+    /// Removes the last decimal digit (integer division by 10).
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::modes::BetField;
+    /// let mut b = BetField::default();
+    /// b.set(123);
+    /// b.pop_digit();
+    /// assert_eq!(b.amount(), 12);
+    /// ```
+    pub fn pop_digit(&mut self) {
+        self.amount /= 10;
+    }
+}
+
+/// The seat occupied by the human player.
+pub const HERO_SEAT: u8 = 0;
+/// The display name shown for the human player.
+pub const HERO_NAME: &str = "You";
+
+/// All state needed to drive Play mode.
+pub struct PlayState {
+    /// The live engine session.
+    pub session: PokerSession,
+    /// The 8 bot profiles (indices 0..8 correspond to seats 1..=8).
+    pub bots: Vec<BotProfile>,
+    /// RNG used for bot decisions. Seedable for determinism.
+    pub rng: SmallRng,
+    /// What the engine is waiting on right now.
+    pub awaiting: Awaiting,
+    /// Composed bet/raise amount.
+    pub bet: BetField,
+    /// Wall-clock instant of the last applied bot action — used to throttle
+    /// bot pacing.
+    pub last_step_at: Instant,
+    /// Minimum delay between consecutive bot actions.
+    pub speed: Duration,
+    /// Resolved RNG seed (so the user can reproduce the session).
+    pub seed: u64,
+}
+
+impl PlayState {
+    /// Initialises a Play session: builds nine seats (hero + 8 random bots),
+    /// posts blinds, deals the first hand, and primes the engine.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Engine`] if `pkcore` rejects the table or
+    /// initial deal — for example, blinds larger than the starting stack.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::cli::PlayArgs;
+    /// use pktui::log_panel::LogPanel;
+    /// use pktui::modes::PlayState;
+    ///
+    /// let mut log = LogPanel::new();
+    /// let state = PlayState::new(&PlayArgs::default(), &mut log).unwrap();
+    /// assert_eq!(state.bots.len(), 8);
+    /// ```
+    pub fn new(args: &PlayArgs, log: &mut LogPanel) -> Result<Self> {
+        let (mut rng, seed) = seeded_rng(args.game.seed);
+
+        // Pick 8 bots out of the default pool + joker (matches pkarena0-web).
+        let mut pool = BotProfile::default_profiles();
+        pool.push(BotProfile::joker());
+        pool.shuffle(&mut rng);
+        let bots: Vec<BotProfile> = pool.into_iter().take(8).collect();
+
+        let mut seats = vec![SeatNoCell::new(PlayerNoCell::new_with_chips(
+            HERO_NAME.to_string(),
+            args.game.chips,
+        ))];
+        for b in &bots {
+            seats.push(SeatNoCell::new(PlayerNoCell::new_with_chips(
+                b.name.clone(),
+                args.game.chips,
+            )));
+        }
+
+        let table = TableNoCell::nlh_from_seats(
+            SeatsNoCell::new(seats),
+            ForcedBets::new(args.game.small_blind, args.game.big_blind),
+        );
+
+        let mut session = PokerSession::new(table);
+        session.start_hand()?;
+
+        log.push(
+            Severity::Info,
+            format!(
+                "Play started: blinds {}/{} starting {} chips, seed={seed}",
+                args.game.small_blind, args.game.big_blind, args.game.chips
+            ),
+        );
+        log.push(Severity::Info, "Hand 1 dealt".to_string());
+
+        Ok(Self {
+            session,
+            bots,
+            rng,
+            awaiting: Awaiting::Bot,
+            bet: BetField::default(),
+            last_step_at: Instant::now() - Duration::from_secs(1),
+            speed: Duration::from_millis(600),
+            seed,
+        })
+    }
+
+    /// Returns the display name of the seat.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::cli::PlayArgs;
+    /// use pktui::log_panel::LogPanel;
+    /// use pktui::modes::PlayState;
+    ///
+    /// let mut log = LogPanel::new();
+    /// let state = PlayState::new(&PlayArgs::default(), &mut log).unwrap();
+    /// assert_eq!(state.seat_name(0), "You");
+    /// assert_eq!(state.seat_name(1), state.bots[0].name);
+    /// ```
+    #[must_use]
+    pub fn seat_name(&self, seat: u8) -> String {
+        if seat == HERO_SEAT {
+            HERO_NAME.to_string()
+        } else {
+            self.bots
+                .get((seat as usize).saturating_sub(1))
+                .map(|b| b.name.clone())
+                .unwrap_or_else(|| format!("seat {seat}"))
+        }
+    }
+
+    /// Returns true if it is currently the hero's turn.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::cli::PlayArgs;
+    /// use pktui::log_panel::LogPanel;
+    /// use pktui::modes::PlayState;
+    ///
+    /// let mut log = LogPanel::new();
+    /// let state = PlayState::new(&PlayArgs::default(), &mut log).unwrap();
+    /// // After init it is a bot's turn (UTG, three left of BTN).
+    /// assert!(!state.hero_to_act());
+    /// ```
+    #[must_use]
+    pub fn hero_to_act(&self) -> bool {
+        matches!(self.awaiting, Awaiting::Human(s) if s == HERO_SEAT)
+    }
+
+    /// Drives the engine forward by one [`SessionStep`] and updates
+    /// [`Awaiting`] accordingly.
+    ///
+    /// Bot decisions are evaluated and applied in the same call so the UI
+    /// sees one bot per tick rather than ten in a flash. When it becomes the
+    /// hero's turn the state flips to `Awaiting::Human(seat)` and stays
+    /// there until [`apply_human`](PlayState::apply_human) is called.
+    ///
+    /// Returns `Ok(true)` if a bot acted, `Ok(false)` otherwise (so the
+    /// caller can decide whether to redraw immediately).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Engine`] on any pkcore failure.
+    pub fn tick(&mut self, log: &mut LogPanel) -> Result<bool> {
+        if !matches!(self.awaiting, Awaiting::Bot) {
+            return Ok(false);
+        }
+        if self.last_step_at.elapsed() < self.speed {
+            return Ok(false);
+        }
+
+        match self.session.next_step() {
+            SessionStep::PlayerToAct(seat) => {
+                if seat == HERO_SEAT {
+                    self.awaiting = Awaiting::Human(seat);
+                    self.bet = BetField::default();
+                    log.push(Severity::Info, format!("Your turn (seat {seat})"));
+                    Ok(false)
+                } else {
+                    let profile_idx = (seat as usize).saturating_sub(1);
+                    let action =
+                        self.bots[profile_idx].decide(&self.session.table, seat, &mut self.rng);
+                    let desc = describe_action(&self.session.table, seat, action);
+                    self.session.apply_action(seat, action)?;
+                    log.push(
+                        severity_for(action),
+                        format!("{}: {desc}", self.seat_name(seat)),
+                    );
+                    self.last_step_at = Instant::now();
+                    Ok(true)
+                }
+            }
+            SessionStep::StreetAdvanced => {
+                let board = self.session.table.board.to_string();
+                log.push(Severity::Info, format!("Board: {board}"));
+                self.last_step_at = Instant::now();
+                Ok(true)
+            }
+            SessionStep::HandComplete => {
+                let winnings = self.session.end_hand()?;
+                let n = self.session.table.seats.0.len() as u8;
+                for w in winnings.vec() {
+                    let chips = w.equity.chips;
+                    for seat in 0..n {
+                        if w.equity.seats.contains(seat) {
+                            log.push(
+                                Severity::Win,
+                                format!("{} wins {} chips", self.seat_name(seat), chips),
+                            );
+                        }
+                    }
+                }
+                self.session.table.button_up();
+                let busted = self.session.eliminate_busted();
+                for s in busted {
+                    log.push(Severity::Error, format!("{} eliminated", self.seat_name(s)));
+                }
+                if self.session.count_funded() < 2
+                    || self
+                        .session
+                        .table
+                        .seats
+                        .get_seat(HERO_SEAT)
+                        .map(|s| s.is_empty() || s.player.chips == 0)
+                        .unwrap_or(true)
+                {
+                    self.awaiting = Awaiting::SessionOver;
+                    log.push(Severity::Info, "Session over. Press q to quit.".to_string());
+                } else {
+                    self.awaiting = Awaiting::HandComplete;
+                    log.push(Severity::Info, "Press Enter for next hand.".to_string());
+                }
+                Ok(true)
+            }
+        }
+    }
+
+    /// Starts the next hand after [`Awaiting::HandComplete`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Engine`] if the engine fails to start a new
+    /// hand (extremely rare — usually means no funded seats).
+    pub fn next_hand(&mut self, log: &mut LogPanel) -> Result<()> {
+        if !matches!(self.awaiting, Awaiting::HandComplete) {
+            return Ok(());
+        }
+        self.session.start_hand()?;
+        log.push(
+            Severity::Info,
+            format!("Hand {} dealt", self.session.hand_number),
+        );
+        self.awaiting = Awaiting::Bot;
+        self.last_step_at = Instant::now() - self.speed;
+        Ok(())
+    }
+
+    /// Applies a human action and flips state back to [`Awaiting::Bot`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Engine`] if pkcore rejects the action (for
+    /// example, an under-min raise). The state stays at `Awaiting::Human` so
+    /// the user can try again.
+    pub fn apply_human(&mut self, action: PlayerAction, log: &mut LogPanel) -> Result<()> {
+        let Awaiting::Human(seat) = self.awaiting else {
+            return Ok(());
+        };
+        let desc = describe_action(&self.session.table, seat, action);
+        self.session.apply_action(seat, action)?;
+        log.push(severity_for(action), format!("{}: {desc}", HERO_NAME));
+        self.awaiting = Awaiting::Bot;
+        self.last_step_at = Instant::now() - self.speed;
+        Ok(())
+    }
+}
+
+/// Builds a one-line description of `action` for the log.
+///
+/// The function reads the table to compute call amounts so messages like
+/// `"calls 200"` stay accurate even when [`PlayerAction::Call`] doesn't carry
+/// the chip amount.
+///
+/// # Examples
+///
+/// ```
+/// use pkcore::casino::action::PlayerAction;
+/// use pkcore::casino::game::ForcedBets;
+/// use pkcore::casino::table_no_cell::{PlayerNoCell, SeatNoCell, SeatsNoCell, TableNoCell};
+/// use pktui::modes::play::describe_action;
+///
+/// let seats = SeatsNoCell::new(vec![
+///     SeatNoCell::new(PlayerNoCell::new_with_chips("A".into(), 1000)),
+///     SeatNoCell::new(PlayerNoCell::new_with_chips("B".into(), 1000)),
+/// ]);
+/// let table = TableNoCell::nlh_from_seats(seats, ForcedBets::new(10, 20));
+/// assert_eq!(describe_action(&table, 0, PlayerAction::Fold), "folds");
+/// assert_eq!(describe_action(&table, 0, PlayerAction::Bet(50)), "bets 50");
+/// ```
+#[must_use]
+pub fn describe_action(table: &TableNoCell, seat: u8, action: PlayerAction) -> String {
+    match action {
+        PlayerAction::Fold => "folds".into(),
+        PlayerAction::Check => "checks".into(),
+        PlayerAction::Call if table.to_call(seat) == 0 => "checks".into(),
+        PlayerAction::Call => format!("calls {}", table.to_call(seat)),
+        PlayerAction::Bet(n) => format!("bets {n}"),
+        PlayerAction::Raise(n) => format!("raises to {n}"),
+        PlayerAction::AllIn => {
+            let chips = table.seats.get_seat(seat).map_or(0, |s| s.player.chips);
+            format!("ALL-IN ({chips})")
+        }
+    }
+}
+
+fn severity_for(action: PlayerAction) -> Severity {
+    match action {
+        PlayerAction::Fold => Severity::Fold,
+        PlayerAction::Check | PlayerAction::Call => Severity::Info,
+        PlayerAction::Bet(_) | PlayerAction::Raise(_) | PlayerAction::AllIn => Severity::Action,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cli::PlayArgs;
+
+    fn play_with_seed(seed: u64) -> PlayState {
+        let mut log = LogPanel::new();
+        let mut args = PlayArgs::default();
+        args.game.seed = Some(seed);
+        PlayState::new(&args, &mut log).unwrap()
+    }
+
+    #[test]
+    fn new_seats_nine_players() {
+        let s = play_with_seed(1);
+        assert_eq!(s.bots.len(), 8);
+        assert_eq!(s.session.table.seats.0.len(), 9);
+    }
+
+    #[test]
+    fn deterministic_bots_for_same_seed() {
+        let a = play_with_seed(99)
+            .bots
+            .iter()
+            .map(|b| b.name.clone())
+            .collect::<Vec<_>>();
+        let b = play_with_seed(99)
+            .bots
+            .iter()
+            .map(|b| b.name.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn seat_name_hero_and_bots() {
+        let s = play_with_seed(2);
+        assert_eq!(s.seat_name(0), "You");
+        assert_eq!(s.seat_name(1), s.bots[0].name);
+        assert_eq!(s.seat_name(8), s.bots[7].name);
+    }
+
+    #[test]
+    fn bet_field_arithmetic() {
+        let mut b = BetField::default();
+        b.bump(100);
+        b.bump(50);
+        assert_eq!(b.amount(), 150);
+        b.cut(75);
+        assert_eq!(b.amount(), 75);
+    }
+
+    #[test]
+    fn bet_field_digit_entry() {
+        let mut b = BetField::default();
+        for d in [1, 2, 3, 4] {
+            b.push_digit(d);
+        }
+        assert_eq!(b.amount(), 1234);
+        b.pop_digit();
+        assert_eq!(b.amount(), 123);
+    }
+
+    #[test]
+    fn describe_action_variants() {
+        let seats = SeatsNoCell::new(vec![
+            SeatNoCell::new(PlayerNoCell::new_with_chips("A".into(), 1000)),
+            SeatNoCell::new(PlayerNoCell::new_with_chips("B".into(), 1000)),
+        ]);
+        let table = TableNoCell::nlh_from_seats(seats, ForcedBets::new(10, 20));
+        assert_eq!(describe_action(&table, 0, PlayerAction::Fold), "folds");
+        assert_eq!(describe_action(&table, 0, PlayerAction::Bet(50)), "bets 50");
+        assert_eq!(
+            describe_action(&table, 0, PlayerAction::Raise(80)),
+            "raises to 80"
+        );
+        assert!(describe_action(&table, 0, PlayerAction::AllIn).starts_with("ALL-IN"));
+    }
+
+    #[test]
+    fn tick_advances_until_hero() {
+        let mut s = play_with_seed(7);
+        let mut log = LogPanel::new();
+        s.speed = Duration::from_millis(0);
+        for _ in 0..200 {
+            if matches!(
+                s.awaiting,
+                Awaiting::Human(_) | Awaiting::HandComplete | Awaiting::SessionOver
+            ) {
+                break;
+            }
+            let _ = s.tick(&mut log);
+        }
+        // Either the hero must act, or the bots all folded preflop and the
+        // hand completed without the hero seeing a turn.
+        assert!(matches!(
+            s.awaiting,
+            Awaiting::Human(_) | Awaiting::HandComplete | Awaiting::SessionOver
+        ));
+    }
+}
