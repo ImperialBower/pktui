@@ -115,5 +115,5 @@ forbidden outside tests, etc.). New code should follow them.
 
 ## Licence
 
-Triple-licensed under Apache 2.0, GPL 3.0, or MIT (your choice), matching
-the upstream `pkcore` engine.
+Dual-licensed under MIT OR Apache-2.0 (your choice), matching the upstream
+`pkcore` engine.

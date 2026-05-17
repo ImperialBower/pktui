@@ -12,13 +12,13 @@
 //! The crate is structured around an Elm-style **Model / Message / Update**
 //! loop:
 //!
-//! * [`App`](crate::app::App) is the model — it owns the [`pkcore::PokerSession`],
+//! * [`App`] is the model — it owns the [`PokerSession`](pkcore::casino::session::PokerSession),
 //!   bot roster, hand log and per-mode UI state.
 //! * [`Msg`](crate::update::Msg) is the message — every key press, tick or
 //!   internal command is normalised into a `Msg`.
 //! * [`update`](crate::update::update) is the pure(-ish) reducer — it advances
 //!   the model and returns whether the app should keep running.
-//! * [`ui::view`](crate::ui::view) is the render — it draws the current model
+//! * [`ui::view`] is the render — it draws the current model
 //!   to a [`ratatui::Frame`].
 //!
 //! # Quick start
@@ -32,7 +32,7 @@
 //!
 //! # Modules
 //!
-//! * [`app`] — the central [`App`](app::App) state.
+//! * [`app`] — the central [`App`] state.
 //! * [`cli`] — clap command-line definitions.
 //! * [`config`] — TOML config loaded from `~/.config/pktui/config.toml`.
 //! * [`event`] — crossterm event polling with a tick timer for bot pacing.

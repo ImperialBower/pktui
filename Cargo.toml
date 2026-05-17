@@ -1,6 +1,6 @@
 [package]
 name = "pktui"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 rust-version = "1.94.1"
 description = "Ratatui terminal client for the pkcore poker engine."
@@ -15,8 +15,8 @@ color-eyre = "0.6"
 rand = "0.9"
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
-dirs = "5"
-pkcore = { version = "0.0.57", features = ["bot-profiles", "hand-histories"] }
+dirs = "6"
+pkcore = { version = "0.1.1", features = ["bot-profiles", "hand-histories"] }
 
 [dev-dependencies]
 tempfile = "3"

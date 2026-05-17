@@ -12,20 +12,27 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
-ignore = []
+ignore = [
+    # atomic-polyfill is unmaintained — pulled in transitively via
+    #   heapless → postcard → pkcore.
+    # We cannot fix this from pktui; the upstream chain needs to migrate to
+    # portable-atomic. Tracked for review when postcard publishes a release
+    # that drops heapless 0.7.
+    "RUSTSEC-2023-0089",
+]
 
 [licenses]
 # List of explicitly allowed licenses
 # See https://spdx.org/licenses/ for list of possible licenses
 #
-# This project is GPL-3.0-or-later, so we only allow licenses that are:
-# 1. GPL-compatible (can be combined with GPL code)
-# 2. More permissive than GPL (allow relicensing under GPL)
+# pktui and pkcore are both MIT OR Apache-2.0. The allowlist permits other
+# permissive licenses commonly used in the Rust ecosystem, plus MPL-2.0 for
+# two specific transitive dependencies (see below).
 #
-# IMPORTANT: GPL-2.0-only is NOT compatible with GPL-3.0!
+# Strong copyleft licenses (GPL, AGPL, LGPL) are intentionally NOT listed —
+# adding one would force a license change on pktui's distributed binary.
 #
 # NOTE: To avoid warnings, only actively used licenses are listed below.
-# Uncomment additional licenses as you add dependencies that need them.
 
 allow = [
     # Most common in Rust (covers ~90% of crates)
@@ -36,27 +43,20 @@ allow = [
     # BSD family
     "BSD-2-Clause",
     "BSD-3-Clause",
-    "ISC",
     "0BSD",
 
     # Public domain / highly permissive
-    "CC0-1.0",
     "Unlicense",
     "Zlib",
 
     # Other common
     "Unicode-3.0",
-    "Unicode-DFS-2016",
 
-    # Uncomment to add GPL-family licenses if your project uses them:
-    # "GPL-3.0-only",
-    # "GPL-3.0-or-later",
-    # "LGPL-2.1",
-    # "LGPL-2.1-or-later",
-    # "LGPL-3.0-only",
-    # "LGPL-3.0-or-later",
-    # "MPL-2.0",
-    # "AGPL-3.0-only",
+    # MPL-2.0 is a weak file-level copyleft: modifications to MPL files
+    # must be open-sourced, but linking from a non-MPL binary is allowed.
+    # Pulled in by `colored` (transitively via cardpack → pkcore) and
+    # `option-ext` (transitively via dirs).
+    "MPL-2.0",
 ]
 
 # The confidence threshold for detecting a license from license text.
@@ -82,9 +82,22 @@ allow = []
 deny = []
 # Certain crates/versions that will be skipped when doing duplicate detection.
 skip = []
-# Similarly named crates that are allowed. Similar to `skip` but can use
-# glob patterns.
-skip-tree = []
+# Subtrees we do NOT traverse for duplicate detection. Any version skew
+# inside one of these trees is upstream's problem to resolve — we still
+# catch duplicates introduced by our own direct dependencies, just not
+# ones that originate inside these libraries.
+#
+# Why each is here:
+# * pkcore — depends on rusqlite 0.34 (hashbrown 0.15 / foldhash 0.1),
+#   random_name_generator 0.3 (rand 0.8 / rand_core 0.6 / rand_chacha 0.3),
+#   strum 0.28, and uses both getrandom 0.2 and 0.3 directly for WASM
+#   compatibility. None of those are things pktui can change.
+# * ratatui — kasuari pulls hashbrown 0.16 and strum 0.27, both of which
+#   conflict with the pkcore-side versions.
+skip-tree = [
+    { name = "pkcore" },
+    { name = "ratatui" },
+]
 
 [sources]
 # Lint level for what to happen when a crate from a crate registry that is not

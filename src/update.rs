@@ -1,6 +1,6 @@
 //! The message-reducer half of the Elm-style loop.
 //!
-//! Every [`Event`](crate::event::Event) emitted by the runtime is translated
+//! Every [`Event`] emitted by the runtime is translated
 //! into one or more [`Msg`]s by [`event_to_msg`], then [`update`] applies the
 //! `Msg` to the [`App`]. `update` is the single mutation point — the renderer
 //! reads `App` immutably and the event loop only ever calls `update`.
