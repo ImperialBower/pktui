@@ -15,7 +15,7 @@
 //! The seat list uses a [`Table`](ratatui::widgets::Table) widget so columns
 //! stay aligned and the active seat can be highlighted.
 
-use pkcore::casino::table_no_cell::TableNoCell;
+use pkcore::casino::table_no_cell::{SeatNoCell, TableNoCell};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -135,12 +135,8 @@ fn seat_rows<F: Fn(u8) -> String>(
                 .map_or_else(String::new, |c| format!(" {c}"));
             (format!("{}{class}", r.hole), true)
         } else if seat_data.cards.has_cards() {
-            let s = if hero_seat == Some(i) || hero_seat.is_none() {
-                seat_data.cards.sorted_display()
-            } else {
-                "[??]".into()
-            };
-            (s, false)
+            let as_owner = hero_seat == Some(i) || hero_seat.is_none();
+            (format_hole(seat_data, as_owner), false)
         } else {
             (String::new(), false)
         };
@@ -172,6 +168,60 @@ fn seat_rows<F: Fn(u8) -> String>(
     out
 }
 
+/// Formats a seat's hand for the table view.
+///
+/// Branches on visibility — for stud-family variants where `seat.hand`
+/// carries face-up cards, opponents see those up-cards in dealt order and
+/// `??` for each face-down card; the seat's owner sees the full hand with
+/// face-down cards bracketed (`[K♠]`) to indicate concealment from the
+/// other players. For NLHE/PLO where every card is face-down, opponents
+/// see `[??]` (unchanged from before) and the owner sees the sorted
+/// display (also unchanged).
+fn format_hole(seat: &SeatNoCell, as_owner: bool) -> String {
+    let any_up = seat.hand.iter().any(|hc| hc.is_up());
+    if as_owner {
+        if any_up {
+            // Stud-style hero/arena: dealt order, brackets mark down cards.
+            // Right-pad each slot to 4 chars so cards align vertically across
+            // rows ("[A♠]" stays 4-wide; bare "A♠" / "Q♥" get 2 leading spaces).
+            seat.hand
+                .iter()
+                .map(|hc| pad_card_slot(&hc.to_string()))
+                .collect::<Vec<_>>()
+                .join(" ")
+        } else {
+            seat.cards.sorted_display()
+        }
+    } else if any_up {
+        seat.hand
+            .iter()
+            .map(|hc| {
+                if hc.is_up() {
+                    // Up cards stay right-aligned in the 4-char slot so
+                    // they keep their current visual position.
+                    pad_card_slot(&hc.card().to_string())
+                } else {
+                    // Down placeholder shifts 1 char left within the slot
+                    // so "??" lines up with the card content inside the
+                    // hero's bracketed down cards (e.g. `??` under the
+                    // `A♠` of `[A♠]`).
+                    " ?? ".to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ")
+    } else {
+        "[??]".to_string()
+    }
+}
+
+/// Right-aligns a card representation to a 4-char slot so `[A♠]`, ` A♠`,
+/// `  ??`, and `  Q♥` all occupy the same column. Width is in Unicode
+/// scalar values (chars), which matches Rust's `format!` width semantics.
+fn pad_card_slot(s: &str) -> String {
+    format!("{s:>4}")
+}
+
 fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
     let header = Row::new(vec![
         Cell::from("#"),
@@ -192,7 +242,9 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         Constraint::Length(22),
         Constraint::Length(10),
         Constraint::Length(8),
-        Constraint::Length(28),
+        // Wide enough for a 7-card Stud hand with bracketed down cards or
+        // ?? placeholders (e.g. "[A♠] [K♠] Q♥ J♥ T♥ 9♥ [4♣]").
+        Constraint::Length(36),
         Constraint::Length(8),
     ];
 
@@ -296,6 +348,104 @@ fn position_tag(seat: u8, btn: u8, sb: u8, bb: u8) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pkcore::card::Card;
+    use pkcore::casino::table_no_cell::PlayerNoCell;
+
+    fn seat_with(downs: &[Card], ups: &[Card]) -> SeatNoCell {
+        use std::str::FromStr;
+        let mut s = SeatNoCell::new(PlayerNoCell::new_with_chips("X".to_string(), 1_000));
+        // Mirror the dealt cards into the legacy `cards: BoxedCards` storage so
+        // `cards.has_cards()` and the NLHE-hero sorted_display path both work.
+        let joined = downs
+            .iter()
+            .chain(ups.iter())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        s.cards = pkcore::arrays::sliced::BoxedCards::from_str(&joined).unwrap();
+        s.hand.extend_down(downs.iter().copied());
+        s.hand.extend_up(ups.iter().copied());
+        s
+    }
+
+    #[test]
+    fn format_hole_nlhe_opponent_is_hidden() {
+        let seat = seat_with(&[Card::ACE_SPADES, Card::KING_SPADES], &[]);
+        assert_eq!(format_hole(&seat, false), "[??]");
+    }
+
+    #[test]
+    fn format_hole_stud_opponent_shows_up_cards_only() {
+        // 5th street: 2 down + 3 up. Each slot is 4 chars wide; "??" sits
+        // at slot cols 2-3 (` ?? `) so it aligns with the card content
+        // inside hero's bracketed down cards. Up cards stay right-aligned
+        // at slot cols 3-4 so they don't shift.
+        let seat = seat_with(
+            &[Card::ACE_SPADES, Card::KING_SPADES],
+            &[Card::QUEEN_HEARTS, Card::JACK_HEARTS, Card::TEN_HEARTS],
+        );
+        assert_eq!(format_hole(&seat, false), " ??   ??    Q♥   J♥   T♥");
+    }
+
+    #[test]
+    fn format_hole_stud_hero_brackets_down_cards() {
+        // Hero sees own down cards (bracketed) plus own up cards (bare).
+        // "[A♠]" already fills the 4-char slot; "Q♥" gets 2 leading spaces
+        // so its card characters line up under the bracketed-card chars.
+        let seat = seat_with(
+            &[Card::ACE_SPADES, Card::KING_SPADES],
+            &[Card::QUEEN_HEARTS],
+        );
+        assert_eq!(format_hole(&seat, true), "[A♠] [K♠]   Q♥");
+    }
+
+    #[test]
+    fn format_hole_stud_opponent_third_street_one_upcard() {
+        let seat = seat_with(
+            &[Card::ACE_SPADES, Card::KING_SPADES],
+            &[Card::QUEEN_HEARTS],
+        );
+        assert_eq!(format_hole(&seat, false), " ??   ??    Q♥");
+    }
+
+    #[test]
+    fn format_hole_question_marks_align_with_bracketed_card_content() {
+        // Hero's slot 1 = `[A♠]` — card chars `A` and `♠` sit at slot
+        // cols 2 and 3 (inside the brackets). Opponent's `??` placeholder
+        // should sit at the same slot cols so the `?`s line up vertically
+        // with the `A♠` chars. Each row needs at least one up card so
+        // both take the stud-style branch (otherwise opp falls into the
+        // NLHE-style `[??]` shortcut).
+        let hero = seat_with(&[Card::ACE_SPADES], &[Card::DEUCE_CLUBS]);
+        let opp = seat_with(&[Card::ACE_DIAMONDS], &[Card::DEUCE_CLUBS]);
+        let h_chars: Vec<char> = format_hole(&hero, true).chars().collect();
+        let o_chars: Vec<char> = format_hole(&opp, false).chars().collect();
+        assert_eq!(&h_chars[0..4], &['[', 'A', '♠', ']']);
+        assert_eq!(&o_chars[0..4], &[' ', '?', '?', ' ']);
+    }
+
+    #[test]
+    fn format_hole_stud_hero_and_opponent_align_per_slot() {
+        // Both rows should have card slots that start at the same column
+        // indices: slot N begins at char index 5*(N-1).
+        let hero = seat_with(
+            &[Card::ACE_SPADES, Card::KING_SPADES],
+            &[Card::QUEEN_HEARTS],
+        );
+        let opp = seat_with(
+            &[Card::DEUCE_CLUBS, Card::TREY_CLUBS],
+            &[Card::JACK_HEARTS],
+        );
+        let h = format_hole(&hero, true);
+        let o = format_hole(&opp, false);
+        // Both should be the same total length (3 cards × 4 chars + 2 spaces).
+        assert_eq!(h.chars().count(), o.chars().count());
+        // Third-card slot (chars 11..15) is the only up card on either row.
+        let hero_slot3: String = h.chars().skip(10).take(4).collect();
+        let opp_slot3: String = o.chars().skip(10).take(4).collect();
+        assert_eq!(hero_slot3, "  Q♥");
+        assert_eq!(opp_slot3, "  J♥");
+    }
 
     #[test]
     fn position_tag_btn() {
