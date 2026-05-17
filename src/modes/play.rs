@@ -18,7 +18,7 @@ use pkcore::casino::table_no_cell::{PlayerNoCell, SeatNoCell, SeatsNoCell, Table
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 
-use crate::cli::PlayArgs;
+use crate::cli::{PlayArgs, Variant};
 use crate::error::Result;
 use crate::log_panel::{LogPanel, Severity};
 use crate::modes::seeded_rng;
@@ -226,6 +226,45 @@ pub struct PlayState {
     pub last_showdown: Option<Vec<ShowdownSeat>>,
 }
 
+/// Dispatches table construction to the variant-specific pkcore constructor.
+///
+/// NLHE uses blinds; Stud Hi uses ante + bring-in + small-bet/big-bet. When
+/// `--small-bet`/`--big-bet` aren't supplied for Stud, they fall back to
+/// `--small-blind`/`--big-blind` so the existing CLI defaults still produce
+/// a playable table.
+fn build_table(args: &PlayArgs, seats: SeatsNoCell) -> TableNoCell {
+    match args.game.variant {
+        Variant::Nlhe => TableNoCell::nlh_from_seats(
+            seats,
+            ForcedBets::new(args.game.small_blind, args.game.big_blind),
+        ),
+        Variant::StudHi => TableNoCell::stud_hi_from_seats(
+            seats,
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+        ),
+    }
+}
+
+fn start_log_line(args: &PlayArgs, seed: u64) -> String {
+    match args.game.variant {
+        Variant::Nlhe => format!(
+            "Play started: NLHE blinds {}/{} starting {} chips, seed={seed}",
+            args.game.small_blind, args.game.big_blind, args.game.chips
+        ),
+        Variant::StudHi => format!(
+            "Play started: Stud Hi ante {} / bring-in {} / bets {}-{} starting {} chips, seed={seed}",
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+            args.game.chips,
+        ),
+    }
+}
+
 impl PlayState {
     /// Initialises a Play session: builds nine seats (hero + 8 random bots),
     /// posts blinds, deals the first hand, and primes the engine.
@@ -266,21 +305,20 @@ impl PlayState {
             )));
         }
 
-        let table = TableNoCell::nlh_from_seats(
-            SeatsNoCell::new(seats),
-            ForcedBets::new(args.game.small_blind, args.game.big_blind),
-        );
+        let table = build_table(args, SeatsNoCell::new(seats));
 
         let mut session = PokerSession::new(table);
         session.start_hand()?;
 
-        log.push(
-            Severity::Info,
-            format!(
-                "Play started: blinds {}/{} starting {} chips, seed={seed}",
-                args.game.small_blind, args.game.big_blind, args.game.chips
-            ),
-        );
+        log.push(Severity::Info, start_log_line(args, seed));
+        if args.game.variant != Variant::Nlhe {
+            log.push(
+                Severity::Info,
+                "Note: UI rendering for non-NLHE variants is preliminary — \
+                 board/street labels assume Hold'em."
+                    .to_string(),
+            );
+        }
         log.push(Severity::Info, "Hand 1 dealt".to_string());
 
         Ok(Self {
@@ -608,7 +646,7 @@ fn hand_class(hole: &str, board: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::PlayArgs;
+    use crate::cli::{PlayArgs, Variant};
 
     fn play_with_seed(seed: u64) -> PlayState {
         let mut log = LogPanel::new();
@@ -622,6 +660,23 @@ mod tests {
         let s = play_with_seed(1);
         assert_eq!(s.bots.len(), 8);
         assert_eq!(s.session.table.seats.0.len(), 9);
+    }
+
+    #[test]
+    fn new_stud_hi_seats_nine_players_and_logs_warning() {
+        let mut log = LogPanel::new();
+        let mut args = PlayArgs::default();
+        args.game.seed = Some(7);
+        args.game.variant = Variant::StudHi;
+        let s = PlayState::new(&args, &mut log).unwrap();
+        assert_eq!(s.session.table.seats.0.len(), 9);
+        let logged: String = log
+            .iter()
+            .map(|line| line.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(logged.contains("Stud Hi"), "log was: {logged}");
+        assert!(logged.contains("preliminary"), "log was: {logged}");
     }
 
     #[test]
