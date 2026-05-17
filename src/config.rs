@@ -185,6 +185,11 @@ mod tests {
     }
 
     #[test]
+    // Miri doesn't shim `libc::getpwuid_r`, which `dirs::config_dir` falls back
+    // to on Linux when `$XDG_CONFIG_HOME` and `$HOME` are unset. The dirs
+    // lookup is a thin wrapper around platform APIs we don't own, so there's
+    // nothing meaningful for Miri to validate here.
+    #[cfg_attr(miri, ignore = "dirs uses libc::getpwuid_r which Miri does not shim")]
     fn path_resolves_on_test_host() {
         // On any reasonable test host (CI included) dirs::config_dir() works.
         assert!(Config::path().is_some());
