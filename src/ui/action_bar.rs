@@ -60,6 +60,65 @@ pub(crate) fn preset_values(p: &PlayState, seat: u8) -> (usize, usize, usize) {
     (min, half, full)
 }
 
+/// Builds line 1 of the action bar — the prominent bet amount with
+/// structure-appropriate preset values. Fixed-limit games have a single
+/// legal amount per street, so the ½pot / pot / tune hints are dropped
+/// in that branch.
+fn bet_line(p: &PlayState, seat: u8, verb: &str) -> Line<'static> {
+    let amount_span = Span::styled(
+        format!("[ {:>6} ]", p.bet.amount()),
+        Style::default()
+            .fg(Color::Yellow)
+            .bg(Color::Black)
+            .add_modifier(Modifier::BOLD),
+    );
+    let verb_span = Span::styled(format!("{verb}: "), Style::default().fg(Color::Gray));
+    if let BettingStructure::FixedLimit {
+        small_bet,
+        big_bet,
+        raise_cap,
+    } = p.session.table.betting
+    {
+        let (tier_amount, tier_label) = match p.session.table.current_bet_tier() {
+            BetTier::Small => (small_bet, "small bet"),
+            BetTier::Big => (big_bet, "big bet"),
+        };
+        Line::from(vec![
+            verb_span,
+            amount_span,
+            Span::raw("   "),
+            keystyle(" 1 "),
+            Span::styled(
+                format!(" {tier_label}({tier_amount})"),
+                Style::default().fg(Color::Gray),
+            ),
+            Span::raw("   "),
+            Span::styled(
+                format!("fixed limit · small {small_bet} / big {big_bet} · cap {raise_cap}"),
+                Style::default().fg(Color::DarkGray),
+            ),
+        ])
+    } else {
+        let (min, half, full) = preset_values(p, seat);
+        Line::from(vec![
+            verb_span,
+            amount_span,
+            Span::raw("   "),
+            keystyle(" 1 "),
+            Span::styled(format!(" min({min})"), Style::default().fg(Color::Gray)),
+            Span::raw("   "),
+            keystyle(" 2 "),
+            Span::styled(format!(" ½pot({half})"), Style::default().fg(Color::Gray)),
+            Span::raw("   "),
+            keystyle(" 3 "),
+            Span::styled(format!(" pot({full})"), Style::default().fg(Color::Gray)),
+            Span::raw("   "),
+            keystyle(" +/- "),
+            Span::styled(" tune", Style::default().fg(Color::Gray)),
+        ])
+    }
+}
+
 fn play_hints(p: &PlayState) -> Vec<Line<'static>> {
     match p.awaiting {
         Awaiting::HandComplete => vec![
@@ -87,70 +146,7 @@ fn play_hints(p: &PlayState) -> Vec<Line<'static>> {
             let table = &p.session.table;
             let to_call = table.to_call(seat);
             let verb = if to_call == 0 { "Bet" } else { "Raise" };
-
-            // Line 1: prominent bet amount + preset values, shape depends
-            // on the betting structure. Fixed-limit (Stud Hi today) only
-            // has one legal amount per street, so "½pot" / "pot" / "tune"
-            // are meaningless there.
-            let line1 = if let BettingStructure::FixedLimit {
-                small_bet,
-                big_bet,
-                raise_cap,
-            } = table.betting
-            {
-                let tier = table.current_bet_tier();
-                let (tier_amount, tier_label) = match tier {
-                    BetTier::Small => (small_bet, "small bet"),
-                    BetTier::Big => (big_bet, "big bet"),
-                };
-                Line::from(vec![
-                    Span::styled(format!("{verb}: "), Style::default().fg(Color::Gray)),
-                    Span::styled(
-                        format!("[ {:>6} ]", p.bet.amount()),
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .bg(Color::Black)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("   "),
-                    keystyle(" 1 "),
-                    Span::styled(
-                        format!(" {tier_label}({tier_amount})"),
-                        Style::default().fg(Color::Gray),
-                    ),
-                    Span::raw("   "),
-                    Span::styled(
-                        format!(
-                            "fixed limit · small {small_bet} / big {big_bet} · cap {raise_cap}"
-                        ),
-                        Style::default().fg(Color::DarkGray),
-                    ),
-                ])
-            } else {
-                let (min, half, full) = preset_values(p, seat);
-                Line::from(vec![
-                    Span::styled(format!("{verb}: "), Style::default().fg(Color::Gray)),
-                    Span::styled(
-                        format!("[ {:>6} ]", p.bet.amount()),
-                        Style::default()
-                            .fg(Color::Yellow)
-                            .bg(Color::Black)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::raw("   "),
-                    keystyle(" 1 "),
-                    Span::styled(format!(" min({min})"), Style::default().fg(Color::Gray)),
-                    Span::raw("   "),
-                    keystyle(" 2 "),
-                    Span::styled(format!(" ½pot({half})"), Style::default().fg(Color::Gray)),
-                    Span::raw("   "),
-                    keystyle(" 3 "),
-                    Span::styled(format!(" pot({full})"), Style::default().fg(Color::Gray)),
-                    Span::raw("   "),
-                    keystyle(" +/- "),
-                    Span::styled(" tune", Style::default().fg(Color::Gray)),
-                ])
-            };
+            let line1 = bet_line(p, seat, verb);
 
             // Line 2: the discrete action hotkeys.
             let mut line2 = vec![keystyle(" f "), Span::raw(" fold  ")];

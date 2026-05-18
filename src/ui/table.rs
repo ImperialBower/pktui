@@ -16,6 +16,7 @@
 //! stay aligned and the active seat can be highlighted.
 
 use pkcore::casino::table_no_cell::{SeatNoCell, TableNoCell};
+use pkcore::play::hole_card::HoleCard;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -179,7 +180,7 @@ fn seat_rows<F: Fn(u8) -> String>(
 /// display (also unchanged).
 fn format_hole(seat: &SeatNoCell, as_owner: bool) -> String {
     let hand_slice = seat.hand.as_slice();
-    let any_up = hand_slice.iter().any(|hc| hc.is_up());
+    let any_up = hand_slice.iter().any(HoleCard::is_up);
 
     // Dealt cards in dealt order (skipping unfilled blank slots). This is
     // the always-populated source — pkcore's dealer mirrors every dealt
@@ -214,8 +215,7 @@ fn format_hole(seat: &SeatNoCell, as_owner: bool) -> String {
         .map(|(idx, card)| {
             let is_up = hand_slice
                 .get(idx)
-                .map(|hc| hc.is_up())
-                .unwrap_or_else(|| matches!(idx, 2..=5));
+                .map_or_else(|| matches!(idx, 2..=5), HoleCard::is_up);
             if as_owner {
                 if is_up {
                     pad_card_slot(&card.to_string())
