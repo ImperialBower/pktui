@@ -178,41 +178,58 @@ fn seat_rows<F: Fn(u8) -> String>(
 /// see `[??]` (unchanged from before) and the owner sees the sorted
 /// display (also unchanged).
 fn format_hole(seat: &SeatNoCell, as_owner: bool) -> String {
-    let any_up = seat.hand.iter().any(|hc| hc.is_up());
-    if as_owner {
-        if any_up {
-            // Stud-style hero/arena: dealt order, brackets mark down cards.
-            // Right-pad each slot to 4 chars so cards align vertically across
-            // rows ("[A♠]" stays 4-wide; bare "A♠" / "Q♥" get 2 leading spaces).
-            seat.hand
-                .iter()
-                .map(|hc| pad_card_slot(&hc.to_string()))
-                .collect::<Vec<_>>()
-                .join(" ")
-        } else {
+    let hand_slice = seat.hand.as_slice();
+    let any_up = hand_slice.iter().any(|hc| hc.is_up());
+
+    // Dealt cards in dealt order (skipping unfilled blank slots). This is
+    // the always-populated source — pkcore's dealer mirrors every dealt
+    // card here regardless of variant. We use it as the count of truth
+    // so the display never drops a dealt card even if `seat.hand` is
+    // somehow shorter (which shouldn't happen, but lets us survive it).
+    let dealt: Vec<pkcore::card::Card> = seat
+        .cards
+        .as_slice()
+        .iter()
+        .copied()
+        .filter(|c| *c != pkcore::card::Card::BLANK)
+        .collect();
+
+    if !any_up {
+        // NLHE/PLO: every card face-down. Owner sees the sorted hand;
+        // opponents see a single hidden placeholder.
+        return if as_owner {
             seat.cards.sorted_display()
-        }
-    } else if any_up {
-        seat.hand
-            .iter()
-            .map(|hc| {
-                if hc.is_up() {
-                    // Up cards stay right-aligned in the 4-char slot so
-                    // they keep their current visual position.
-                    pad_card_slot(&hc.card().to_string())
-                } else {
-                    // Down placeholder shifts 1 char left within the slot
-                    // so "??" lines up with the card content inside the
-                    // hero's bracketed down cards (e.g. `??` under the
-                    // `A♠` of `[A♠]`).
-                    " ?? ".to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ")
-    } else {
-        "[??]".to_string()
+        } else {
+            "[??]".to_string()
+        };
     }
+
+    // Stud-style: walk the dealt cards in order, looking up per-card
+    // visibility from `seat.hand`. For any tail card the hand doesn't
+    // cover, fall back to the stud dealing pattern (positions 0–1 down,
+    // 2–5 up, 6 down) so a length mismatch can't silently hide a card.
+    dealt
+        .iter()
+        .enumerate()
+        .map(|(idx, card)| {
+            let is_up = hand_slice
+                .get(idx)
+                .map(|hc| hc.is_up())
+                .unwrap_or_else(|| matches!(idx, 2..=5));
+            if as_owner {
+                if is_up {
+                    pad_card_slot(&card.to_string())
+                } else {
+                    pad_card_slot(&format!("[{card}]"))
+                }
+            } else if is_up {
+                pad_card_slot(&card.to_string())
+            } else {
+                " ?? ".to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// Right-aligns a card representation to a 4-char slot so `[A♠]`, ` A♠`,
@@ -301,37 +318,42 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
 }
 
 fn render_board(table: &TableNoCell, frame: &mut Frame, area: Rect) {
-    let board_str = table.board.to_string();
-    let board_display = if board_str.is_empty() {
-        "(pre-flop)".to_string()
-    } else {
-        board_str
-    };
+    let has_board = table.game.family().uses_community_board();
     let pot = table.effective_pot();
     let phase = format!("{:?}", table.phase);
-    let text = Text::from(vec![Line::from(vec![
-        Span::styled("Board: ", Style::default().fg(Color::Gray)),
-        Span::styled(
+
+    let mut spans = Vec::with_capacity(7);
+    if has_board {
+        let board_str = table.board.to_string();
+        let board_display = if board_str.is_empty() {
+            "(pre-flop)".to_string()
+        } else {
+            board_str
+        };
+        spans.push(Span::styled("Board: ", Style::default().fg(Color::Gray)));
+        spans.push(Span::styled(
             board_display,
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("    "),
-        Span::styled("Pot: ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            format!("{pot}"),
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("    "),
-        Span::styled(
-            format!("phase: {phase}"),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ])]);
-    let p = Paragraph::new(text).block(Block::default().borders(Borders::ALL).title(" Board "));
+        ));
+        spans.push(Span::raw("    "));
+    }
+    spans.push(Span::styled("Pot: ", Style::default().fg(Color::Gray)));
+    spans.push(Span::styled(
+        format!("{pot}"),
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::raw("    "));
+    spans.push(Span::styled(
+        format!("phase: {phase}"),
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let p = Paragraph::new(Text::from(vec![Line::from(spans)]))
+        .block(Block::default().borders(Borders::ALL).title(" Board "));
     frame.render_widget(p, area);
 }
 
@@ -409,6 +431,35 @@ mod tests {
     }
 
     #[test]
+    fn format_hole_renders_all_dealt_cards_even_if_hand_is_short() {
+        // Regression: pkcore was observed dealing 6 cards into seat.cards
+        // but only pushing 5 into seat.hand for seat 0, which caused the
+        // hero to show one fewer card than opponents in the table view.
+        // We now iterate seat.cards (always populated by the dealer) and
+        // fall back to stud-position-based visibility for any tail entry
+        // the hand doesn't cover. For a 6-card stud-style row, position 5
+        // (the 6th card) should default to face-up.
+        use std::str::FromStr;
+        let mut s = SeatNoCell::new(PlayerNoCell::new_with_chips("X".to_string(), 1_000));
+        s.cards = pkcore::arrays::sliced::BoxedCards::from_str("5♠ 4♥ 7♥ K♦ 2♠ 9♣").unwrap();
+        // Push only 5 entries into the hand (simulating the observed
+        // pkcore short-hand state): 2 down + 3 up.
+        s.hand.extend_down([Card::FIVE_SPADES, Card::FOUR_HEARTS]);
+        s.hand
+            .extend_up([Card::SEVEN_HEARTS, Card::KING_DIAMONDS, Card::DEUCE_SPADES]);
+        let out = format_hole(&s, true);
+        // All 6 cards should appear, with the 6th treated as face-up.
+        assert!(out.contains("[5♠]"));
+        assert!(out.contains("[4♥]"));
+        assert!(out.contains("7♥"));
+        assert!(out.contains("K♦"));
+        assert!(out.contains("2♠"));
+        assert!(out.contains("9♣"));
+        // 6 slots × 4 chars + 5 separator spaces = 29 chars.
+        assert_eq!(out.chars().count(), 29);
+    }
+
+    #[test]
     fn format_hole_question_marks_align_with_bracketed_card_content() {
         // Hero's slot 1 = `[A♠]` — card chars `A` and `♠` sit at slot
         // cols 2 and 3 (inside the brackets). Opponent's `??` placeholder
@@ -432,10 +483,7 @@ mod tests {
             &[Card::ACE_SPADES, Card::KING_SPADES],
             &[Card::QUEEN_HEARTS],
         );
-        let opp = seat_with(
-            &[Card::DEUCE_CLUBS, Card::TREY_CLUBS],
-            &[Card::JACK_HEARTS],
-        );
+        let opp = seat_with(&[Card::DEUCE_CLUBS, Card::TREY_CLUBS], &[Card::JACK_HEARTS]);
         let h = format_hole(&hero, true);
         let o = format_hole(&opp, false);
         // Both should be the same total length (3 cards × 4 chars + 2 spaces).

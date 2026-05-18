@@ -300,10 +300,21 @@ fn bet_preset(app: &mut App, preset: usize) {
     } else {
         table.bet + table.min_raise()
     };
-    let amount = match preset {
-        1 => (pot / 2).max(min), // "half pot"
-        2 => pot.max(min),       // "pot"
-        _ => min,                // 0 = "min" + any out-of-range sentinel
+    // Fixed-limit has only one legal bet/raise amount per street, so every
+    // preset key collapses to that amount — the ½pot / pot presets don't
+    // make sense in this structure.
+    let is_fixed_limit = matches!(
+        table.betting,
+        pkcore::games::betting_structure::BettingStructure::FixedLimit { .. }
+    );
+    let amount = if is_fixed_limit {
+        min
+    } else {
+        match preset {
+            1 => (pot / 2).max(min), // "half pot"
+            2 => pot.max(min),       // "pot"
+            _ => min,                // 0 = "min" + any out-of-range sentinel
+        }
     };
     p.bet.set(amount);
 }

@@ -11,6 +11,7 @@
 //! truncated on narrower terminals and the bet field — the bit that
 //! actually changes when you press `1`/`2`/`3` — ends up off-screen.
 
+use pkcore::games::betting_structure::{BetTier, BettingStructure};
 use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
@@ -83,33 +84,73 @@ fn play_hints(p: &PlayState) -> Vec<Line<'static>> {
             Line::from(vec![keystyle(" q "), Span::raw(" quit")]),
         ],
         Awaiting::Human(seat) if seat == HERO_SEAT => {
-            let to_call = p.session.table.to_call(seat);
-            let (min, half, full) = preset_values(p, seat);
+            let table = &p.session.table;
+            let to_call = table.to_call(seat);
             let verb = if to_call == 0 { "Bet" } else { "Raise" };
 
-            // Line 1: prominent bet amount + preset values.
-            let line1 = Line::from(vec![
-                Span::styled(format!("{verb}: "), Style::default().fg(Color::Gray)),
-                Span::styled(
-                    format!("[ {:>6} ]", p.bet.amount()),
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .bg(Color::Black)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::raw("   "),
-                keystyle(" 1 "),
-                Span::styled(format!(" min({min})"), Style::default().fg(Color::Gray)),
-                Span::raw("   "),
-                keystyle(" 2 "),
-                Span::styled(format!(" ½pot({half})"), Style::default().fg(Color::Gray)),
-                Span::raw("   "),
-                keystyle(" 3 "),
-                Span::styled(format!(" pot({full})"), Style::default().fg(Color::Gray)),
-                Span::raw("   "),
-                keystyle(" +/- "),
-                Span::styled(" tune", Style::default().fg(Color::Gray)),
-            ]);
+            // Line 1: prominent bet amount + preset values, shape depends
+            // on the betting structure. Fixed-limit (Stud Hi today) only
+            // has one legal amount per street, so "½pot" / "pot" / "tune"
+            // are meaningless there.
+            let line1 = if let BettingStructure::FixedLimit {
+                small_bet,
+                big_bet,
+                raise_cap,
+            } = table.betting
+            {
+                let tier = table.current_bet_tier();
+                let (tier_amount, tier_label) = match tier {
+                    BetTier::Small => (small_bet, "small bet"),
+                    BetTier::Big => (big_bet, "big bet"),
+                };
+                Line::from(vec![
+                    Span::styled(format!("{verb}: "), Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        format!("[ {:>6} ]", p.bet.amount()),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .bg(Color::Black)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("   "),
+                    keystyle(" 1 "),
+                    Span::styled(
+                        format!(" {tier_label}({tier_amount})"),
+                        Style::default().fg(Color::Gray),
+                    ),
+                    Span::raw("   "),
+                    Span::styled(
+                        format!(
+                            "fixed limit · small {small_bet} / big {big_bet} · cap {raise_cap}"
+                        ),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                ])
+            } else {
+                let (min, half, full) = preset_values(p, seat);
+                Line::from(vec![
+                    Span::styled(format!("{verb}: "), Style::default().fg(Color::Gray)),
+                    Span::styled(
+                        format!("[ {:>6} ]", p.bet.amount()),
+                        Style::default()
+                            .fg(Color::Yellow)
+                            .bg(Color::Black)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                    Span::raw("   "),
+                    keystyle(" 1 "),
+                    Span::styled(format!(" min({min})"), Style::default().fg(Color::Gray)),
+                    Span::raw("   "),
+                    keystyle(" 2 "),
+                    Span::styled(format!(" ½pot({half})"), Style::default().fg(Color::Gray)),
+                    Span::raw("   "),
+                    keystyle(" 3 "),
+                    Span::styled(format!(" pot({full})"), Style::default().fg(Color::Gray)),
+                    Span::raw("   "),
+                    keystyle(" +/- "),
+                    Span::styled(" tune", Style::default().fg(Color::Gray)),
+                ])
+            };
 
             // Line 2: the discrete action hotkeys.
             let mut line2 = vec![keystyle(" f "), Span::raw(" fold  ")];
