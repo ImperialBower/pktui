@@ -34,6 +34,8 @@ pub enum Msg {
     Quit,
     /// User pressed `?` to toggle the help overlay.
     ToggleHelp,
+    /// User pressed `D` to dump the current Play state to a YAML file.
+    Dump,
     /// Live modes: user picked a [`PlayerAction`].
     Action(PlayerAction),
     /// Play mode: start the next hand after `HandComplete`.
@@ -109,6 +111,9 @@ fn key_to_msg(app: &App, key: &KeyEvent) -> Msg {
     }
     if matches!(key.code, KeyCode::Char('?')) {
         return Msg::ToggleHelp;
+    }
+    if matches!(key.code, KeyCode::Char('D')) {
+        return Msg::Dump;
     }
 
     match &app.mode {
@@ -188,6 +193,20 @@ pub fn update(app: &mut App, msg: Msg) -> Result<()> {
     match msg {
         Msg::Quit => app.quit(),
         Msg::ToggleHelp => app.toggle_help(),
+        Msg::Dump => {
+            if let AppMode::Play(p) = &app.mode {
+                match p.dump_state(&app.log) {
+                    Ok(path) => app.log.push(
+                        crate::log_panel::Severity::Info,
+                        format!("Dumped state to {}", path.display()),
+                    ),
+                    Err(e) => app.log.push(
+                        crate::log_panel::Severity::Error,
+                        format!("Dump failed: {e}"),
+                    ),
+                }
+            }
+        }
         Msg::Noop => {}
         Msg::Tick => match &mut app.mode {
             AppMode::Play(p) => {

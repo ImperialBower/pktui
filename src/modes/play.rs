@@ -288,11 +288,14 @@ impl PlayState {
     pub fn new(args: &PlayArgs, log: &mut LogPanel) -> Result<Self> {
         let (mut rng, seed) = seeded_rng(args.game.seed);
 
-        // Pick 8 bots out of the default pool + joker (matches pkarena0-web).
+        // Pick bots out of the default pool + joker (matches pkarena0-web).
+        // Stud-family games cap at 8 seats total (52-card deck constraint),
+        // so we only seat `max_seats - 1` bots for those variants.
+        let bot_count = args.game.variant.max_seats().saturating_sub(1);
         let mut pool = BotProfile::default_profiles();
         pool.push(BotProfile::joker());
         pool.shuffle(&mut rng);
-        let bots: Vec<BotProfile> = pool.into_iter().take(8).collect();
+        let bots: Vec<BotProfile> = pool.into_iter().take(bot_count).collect();
 
         let mut seats = vec![SeatNoCell::new(PlayerNoCell::new_with_chips(
             HERO_NAME.to_string(),
@@ -486,6 +489,92 @@ impl PlayState {
         }
     }
 
+    /// Writes a YAML snapshot of the current session state to the working
+    /// directory. Filename: `pktui-dump-<seed>-<phase>-<unix_secs>.yaml`.
+    /// Returns the path written, or an error if I/O fails.
+    ///
+    /// The dump captures table state, every seat's cards + per-card
+    /// visibility, recent log lines, and `awaiting` — enough for a developer
+    /// to reproduce a stuck-state bug from a single file.
+    ///
+    /// # Errors
+    ///
+    /// Returns `std::io::Error` if the file cannot be created or written.
+    pub fn dump_state(&self, log: &LogPanel) -> std::io::Result<std::path::PathBuf> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        let phase = format!("{:?}", self.session.table.phase);
+        let name = format!("pktui-dump-{}-{}-{unix}.yaml", self.seed, phase);
+        let path = std::path::PathBuf::from(&name);
+        let yaml = self.render_state_yaml(log);
+        std::fs::write(&path, yaml)?;
+        Ok(path)
+    }
+
+    fn render_state_yaml(&self, log: &LogPanel) -> String {
+        use std::fmt::Write;
+        let t = &self.session.table;
+        let mut s = String::with_capacity(4096);
+        let _ = writeln!(s, "pktui_dump:");
+        let _ = writeln!(s, "  seed: {}", self.seed);
+        let _ = writeln!(s, "  hand_number: {}", self.session.hand_number);
+        let _ = writeln!(s, "  phase: {:?}", t.phase);
+        let _ = writeln!(s, "  pot: {}", t.pot);
+        let _ = writeln!(s, "  bet: {}", t.bet);
+        let _ = writeln!(s, "  button: {}", t.button);
+        let _ = writeln!(s, "  raises_this_street: {}", t.raises_this_street);
+        let _ = writeln!(s, "  awaiting: {:?}", self.awaiting);
+        let _ = writeln!(s, "  forced:");
+        let _ = writeln!(s, "    small_blind: {}", t.forced.small_blind);
+        let _ = writeln!(s, "    big_blind: {}", t.forced.big_blind);
+        let _ = writeln!(s, "    ante: {}", t.forced.ante);
+        let _ = writeln!(s, "    bring_in: {}", t.forced.bring_in);
+        let _ = writeln!(s, "  betting: {:?}", t.betting);
+        let _ = writeln!(s, "  board: \"{}\"", t.board);
+        let _ = writeln!(s, "  seats:");
+        for (i, seat) in t.seats.0.iter().enumerate() {
+            if seat.is_empty() {
+                continue;
+            }
+            let cards_str = seat
+                .cards
+                .as_slice()
+                .iter()
+                .filter(|c| **c != pkcore::card::Card::BLANK)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let _ = writeln!(s, "    - seat: {i}");
+            let _ = writeln!(s, "      name: \"{}\"", self.seat_name(i as u8));
+            let _ = writeln!(s, "      chips: {}", seat.player.chips);
+            let _ = writeln!(s, "      bet: {}", seat.player.bet);
+            let _ = writeln!(s, "      in_hand: {}", seat.is_in_hand());
+            let _ = writeln!(
+                s,
+                "      cards_dealt: {}",
+                seat.cards.number_of_dealt_cards()
+            );
+            let _ = writeln!(s, "      cards: \"{cards_str}\"");
+            let _ = writeln!(s, "      hand_len: {}", seat.hand.len());
+            let _ = writeln!(s, "      hand:");
+            for hc in seat.hand.iter() {
+                let vis = if hc.is_up() { "Up" } else { "Down" };
+                let _ = writeln!(s, "        - {{ card: \"{}\", visibility: {vis} }}", hc.card());
+            }
+        }
+        let _ = writeln!(s, "  recent_log:");
+        let lines: Vec<&str> = log.iter().map(|l| l.text.as_str()).collect();
+        let start = lines.len().saturating_sub(40);
+        for line in &lines[start..] {
+            let escaped = line.replace('"', "\\\"");
+            let _ = writeln!(s, "    - \"{escaped}\"");
+        }
+        s
+    }
+
     /// Starts the next hand after [`Awaiting::HandComplete`].
     ///
     /// # Errors
@@ -663,13 +752,14 @@ mod tests {
     }
 
     #[test]
-    fn new_stud_hi_seats_nine_players_and_logs_warning() {
+    fn new_stud_hi_seats_eight_players_and_logs_warning() {
         let mut log = LogPanel::new();
         let mut args = PlayArgs::default();
         args.game.seed = Some(7);
         args.game.variant = Variant::StudHi;
         let s = PlayState::new(&args, &mut log).unwrap();
-        assert_eq!(s.session.table.seats.0.len(), 9);
+        assert_eq!(s.bots.len(), 7);
+        assert_eq!(s.session.table.seats.0.len(), 8);
         let logged: String = log
             .iter()
             .map(|line| line.text.clone())

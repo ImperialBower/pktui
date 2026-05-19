@@ -42,6 +42,29 @@ pub enum Variant {
     StudHi,
 }
 
+impl Variant {
+    /// Maximum number of seats supported by this variant.
+    ///
+    /// Stud-family games deal 7 cards per player, so the 52-card deck only
+    /// supports up to 8 players (8 × 7 = 56 with the bring-in card recycle).
+    /// NLHE / PLO use community cards, so they comfortably seat 9.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::cli::Variant;
+    /// assert_eq!(Variant::Nlhe.max_seats(), 9);
+    /// assert_eq!(Variant::StudHi.max_seats(), 8);
+    /// ```
+    #[must_use]
+    pub fn max_seats(self) -> usize {
+        match self {
+            Self::Nlhe => 9,
+            Self::StudHi => 8,
+        }
+    }
+}
+
 /// Top-level CLI definition.
 ///
 /// # Examples

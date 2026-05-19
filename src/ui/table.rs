@@ -430,6 +430,188 @@ mod tests {
         assert_eq!(format_hole(&seat, false), " ??   ??    Q♥");
     }
 
+    /// End-to-end probe: drive a Stud Hi session through 6th street and
+    /// dump what `format_hole(hero, true)` returns at every PlayerToAct
+    /// moment plus right after each StreetAdvanced. The user reported that
+    /// on 6th street, hero shows 5 cards while opponents show 6 — this
+    /// test reproduces a real session and asserts every state. If the bug
+    /// is in `format_hole` (not just the data layer), this will catch it.
+    #[test]
+    fn format_hole_hero_renders_six_cards_on_sixth_street_in_real_session() {
+        use pkcore::bot::profile::BotProfile;
+        use pkcore::casino::action::PlayerAction;
+        use pkcore::casino::session::{PokerSession, SessionStep};
+        use pkcore::casino::table_no_cell::{SeatsNoCell, TableNoCell};
+        use rand::SeedableRng;
+        use rand::rngs::SmallRng;
+        use rand::seq::SliceRandom;
+
+        let names = [
+            "You", "abc", "tight_aggressive", "loose_passive", "gto",
+            "short_stack_ninja", "joker", "maniac", "loose_aggressive",
+        ];
+        let seats: Vec<SeatNoCell> = names
+            .iter()
+            .map(|n| SeatNoCell::new(PlayerNoCell::new_with_chips((*n).to_string(), 10_000)))
+            .collect();
+        let table = TableNoCell::stud_hi_from_seats(SeatsNoCell::new(seats), 10, 25, 50, 100);
+        let mut session = PokerSession::new(table);
+        session.start_hand().unwrap();
+
+        let mut rng = SmallRng::seed_from_u64(3_596_220_112_812_468_068);
+        let mut pool = BotProfile::default_profiles();
+        pool.push(BotProfile::joker());
+        pool.shuffle(&mut rng);
+        let bots: Vec<BotProfile> = pool.into_iter().take(8).collect();
+
+        let mut reached_6th = false;
+        for step in 0..1000 {
+            let phase_before = session.table.phase;
+            match session.next_step() {
+                SessionStep::PlayerToAct(seat) => {
+                    let hero_seat = session.table.seats.get_seat(0).unwrap();
+                    let hero_cards = hero_seat.cards.number_of_dealt_cards();
+                    let hero_hand = hero_seat.hand.len();
+                    let hero_format = format_hole(hero_seat, true);
+                    // Count card slots in the rendered output (each slot is 4
+                    // chars wide, joined by single spaces — so length tells us
+                    // slot count for the stud branch).
+                    let slot_count_render = (hero_format.chars().count() + 1) / 5;
+                    eprintln!(
+                        "step {step}: phase={phase_before:?} acting={seat} \
+                         hero.cards={hero_cards} hero.hand={hero_hand} \
+                         render_slots={slot_count_render} '{hero_format}'"
+                    );
+                    if phase_before == pkcore::games::GamePhase::Stud6th {
+                        reached_6th = true;
+                        assert_eq!(
+                            slot_count_render, 6,
+                            "[6th street] hero render shows {slot_count_render} slots, expected 6. \
+                             cards={hero_cards} hand={hero_hand} render='{hero_format}'"
+                        );
+                    }
+                    let action = if seat == 0 {
+                        if session.table.to_call(seat) == 0 {
+                            PlayerAction::Check
+                        } else {
+                            PlayerAction::Call
+                        }
+                    } else {
+                        let bot_idx = (seat as usize) - 1;
+                        bots[bot_idx].decide(&session.table, seat, &mut rng)
+                    };
+                    if session.apply_action(seat, action).is_err() {
+                        let _ = session.apply_action(seat, PlayerAction::Fold);
+                    }
+                }
+                SessionStep::StreetAdvanced => {
+                    let hero_seat = session.table.seats.get_seat(0).unwrap();
+                    let hero_cards = hero_seat.cards.number_of_dealt_cards();
+                    let hero_hand = hero_seat.hand.len();
+                    let hero_format = format_hole(hero_seat, true);
+                    let slot_count_render = (hero_format.chars().count() + 1) / 5;
+                    eprintln!(
+                        "step {step}: StreetAdvanced phase={:?} \
+                         hero.cards={hero_cards} hero.hand={hero_hand} \
+                         render_slots={slot_count_render} '{hero_format}'"
+                    , session.table.phase);
+                    if session.table.phase == pkcore::games::GamePhase::Stud6th {
+                        reached_6th = true;
+                        assert_eq!(
+                            slot_count_render, 6,
+                            "[6th street post-advance] hero render shows {slot_count_render} slots, expected 6. \
+                             cards={hero_cards} hand={hero_hand} render='{hero_format}'"
+                        );
+                    }
+                }
+                SessionStep::HandComplete => break,
+            }
+        }
+        assert!(reached_6th, "never reached 6th street in 1000 steps");
+    }
+
+    /// Render a Stud Hi PlayState to a TestBackend at 6th street and read
+    /// the hero's row text from the buffer. This catches column-width / panel
+    /// truncation bugs that `format_hole` unit tests wouldn't see.
+    #[test]
+    fn rendered_hero_row_shows_six_cards_on_sixth_street() {
+        use crate::App;
+        use pkcore::bot::profile::BotProfile;
+        use pkcore::casino::action::PlayerAction;
+        use pkcore::casino::session::SessionStep;
+        use pkcore::games::GamePhase;
+        use rand::SeedableRng;
+        use rand::rngs::SmallRng;
+        use rand::seq::SliceRandom;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        // Build the same Play default app, then override its session to Stud Hi.
+        let mut args = crate::cli::PlayArgs::default();
+        args.game.variant = crate::cli::Variant::StudHi;
+        args.game.seed = Some(3_596_220_112_812_468_068);
+        let mut log = crate::log_panel::LogPanel::new();
+        let mut state = crate::modes::PlayState::new(&args, &mut log).unwrap();
+
+        let mut rng = SmallRng::seed_from_u64(3_596_220_112_812_468_068);
+        let mut pool = BotProfile::default_profiles();
+        pool.push(BotProfile::joker());
+        pool.shuffle(&mut rng);
+        let bots: Vec<BotProfile> = pool.into_iter().take(8).collect();
+
+        // Drive until phase reaches Stud6th, then render.
+        for _ in 0..1000 {
+            if state.session.table.phase == GamePhase::Stud6th {
+                break;
+            }
+            match state.session.next_step() {
+                SessionStep::PlayerToAct(seat) => {
+                    let action = if seat == 0 {
+                        if state.session.table.to_call(seat) == 0 {
+                            PlayerAction::Check
+                        } else {
+                            PlayerAction::Call
+                        }
+                    } else {
+                        let bot_idx = (seat as usize) - 1;
+                        bots[bot_idx].decide(&state.session.table, seat, &mut rng)
+                    };
+                    if state.session.apply_action(seat, action).is_err() {
+                        let _ = state.session.apply_action(seat, PlayerAction::Fold);
+                    }
+                }
+                SessionStep::StreetAdvanced => {}
+                SessionStep::HandComplete => panic!("hand ended before 6th street"),
+            }
+        }
+        assert_eq!(state.session.table.phase, GamePhase::Stud6th);
+
+        // Verify data layer: hero has 6 cards.
+        let hero_seat = state.session.table.seats.get_seat(0).unwrap();
+        assert_eq!(hero_seat.cards.number_of_dealt_cards(), 6);
+        assert_eq!(hero_seat.hand.len(), 6);
+        let format_out = format_hole(hero_seat, true);
+        eprintln!("hero format_hole = '{format_out}'");
+
+        let mut app = App::play_default().unwrap();
+        // Swap in our Stud state.
+        app.mode = crate::app::AppMode::Play(Box::new(state));
+
+        // Render at several widths to see where the row gets clipped.
+        for width in [80u16, 100, 120, 140] {
+            let backend = TestBackend::new(width, 36);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|f| crate::ui::view(&app, f)).unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            eprintln!("\n=== terminal width = {width} ===");
+            // Hero row should be the row with "You" in the Name column.
+            for y in 0..15u16 {
+                let line: String = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
+                eprintln!("  y={:2}: '{}'", y, line);
+            }
+        }
+    }
+
     #[test]
     fn format_hole_renders_all_dealt_cards_even_if_hand_is_short() {
         // Regression: pkcore was observed dealing 6 cards into seat.cards
