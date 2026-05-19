@@ -431,8 +431,8 @@ mod tests {
     }
 
     /// End-to-end probe: drive a Stud Hi session through 6th street and
-    /// dump what `format_hole(hero, true)` returns at every PlayerToAct
-    /// moment plus right after each StreetAdvanced. The user reported that
+    /// dump what `format_hole(hero, true)` returns at every `PlayerToAct`
+    /// moment plus right after each `StreetAdvanced`. The user reported that
     /// on 6th street, hero shows 5 cards while opponents show 6 — this
     /// test reproduces a real session and asserts every state. If the bug
     /// is in `format_hole` (not just the data layer), this will catch it.
@@ -538,7 +538,7 @@ mod tests {
         assert!(reached_6th, "never reached 6th street in 1000 steps");
     }
 
-    /// Render a Stud Hi PlayState to a TestBackend at 6th street and read
+    /// Render a Stud Hi `PlayState` to a `TestBackend` at 6th street and read
     /// the hero's row text from the buffer. This catches column-width / panel
     /// truncation bugs that `format_hole` unit tests wouldn't see.
     #[test]
@@ -615,7 +615,7 @@ mod tests {
             // Hero row should be the row with "You" in the Name column.
             for y in 0..15u16 {
                 let line: String = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
-                eprintln!("  y={:2}: '{}'", y, line);
+                eprintln!("  y={y:2}: '{line}'");
             }
         }
     }

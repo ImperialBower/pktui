@@ -193,20 +193,7 @@ pub fn update(app: &mut App, msg: Msg) -> Result<()> {
     match msg {
         Msg::Quit => app.quit(),
         Msg::ToggleHelp => app.toggle_help(),
-        Msg::Dump => {
-            if let AppMode::Play(p) = &app.mode {
-                match p.dump_state(&app.log) {
-                    Ok(path) => app.log.push(
-                        crate::log_panel::Severity::Info,
-                        format!("Dumped state to {}", path.display()),
-                    ),
-                    Err(e) => app.log.push(
-                        crate::log_panel::Severity::Error,
-                        format!("Dump failed: {e}"),
-                    ),
-                }
-            }
-        }
+        Msg::Dump => dump_play_state(app),
         Msg::Noop => {}
         Msg::Tick => match &mut app.mode {
             AppMode::Play(p) => {
@@ -301,6 +288,21 @@ pub fn update(app: &mut App, msg: Msg) -> Result<()> {
         }
     }
     Ok(())
+}
+
+fn dump_play_state(app: &mut App) {
+    if let AppMode::Play(p) = &app.mode {
+        match p.dump_state(&app.log) {
+            Ok(path) => app.log.push(
+                crate::log_panel::Severity::Info,
+                format!("Dumped state to {}", path.display()),
+            ),
+            Err(e) => app.log.push(
+                crate::log_panel::Severity::Error,
+                format!("Dump failed: {e}"),
+            ),
+        }
+    }
 }
 
 fn bet_preset(app: &mut App, preset: usize) {

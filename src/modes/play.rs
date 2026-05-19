@@ -504,8 +504,7 @@ impl PlayState {
         use std::time::{SystemTime, UNIX_EPOCH};
         let unix = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .map(|d| d.as_secs())
-            .unwrap_or(0);
+            .map_or(0, |d| d.as_secs());
         let phase = format!("{:?}", self.session.table.phase);
         let name = format!("pktui-dump-{}-{}-{unix}.yaml", self.seed, phase);
         let path = std::path::PathBuf::from(&name);
@@ -539,6 +538,7 @@ impl PlayState {
             if seat.is_empty() {
                 continue;
             }
+            let seat_idx = u8::try_from(i).unwrap_or(u8::MAX);
             let cards_str = seat
                 .cards
                 .as_slice()
@@ -548,7 +548,7 @@ impl PlayState {
                 .collect::<Vec<_>>()
                 .join(" ");
             let _ = writeln!(s, "    - seat: {i}");
-            let _ = writeln!(s, "      name: \"{}\"", self.seat_name(i as u8));
+            let _ = writeln!(s, "      name: \"{}\"", self.seat_name(seat_idx));
             let _ = writeln!(s, "      chips: {}", seat.player.chips);
             let _ = writeln!(s, "      bet: {}", seat.player.bet);
             let _ = writeln!(s, "      in_hand: {}", seat.is_in_hand());

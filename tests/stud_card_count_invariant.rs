@@ -60,8 +60,8 @@ fn dealt_counts(session: &PokerSession) -> Vec<(u8, usize, usize)> {
 /// the to-act seat, this will catch it.
 fn assert_counts_balanced(session: &PokerSession, label: &str) {
     let counts = dealt_counts(session);
-    if let Some((seat0, c0, _h0)) = counts.first().copied() {
-        for (seat_i, cards_i, hand_i) in counts.iter().copied() {
+    if let Some(&(seat0, c0, _h0)) = counts.first() {
+        for &(seat_i, cards_i, hand_i) in &counts {
             assert_eq!(
                 cards_i, c0,
                 "[{label}] seat {seat_i} cards.dealt={cards_i} but seat {seat0} cards.dealt={c0} \
@@ -133,14 +133,14 @@ fn hero_has_same_card_count_as_opponents_at_every_to_act_moment() {
 
 /// Reproduces the pktui scenario from the bug report: 9 bot-driven seats
 /// playing Stud Hi with the seed used in the screenshot, asserting the
-/// card-count invariant at every PlayerToAct.
+/// card-count invariant at every `PlayerToAct`.
 #[test]
 fn bot_driven_session_keeps_seat_card_counts_balanced() {
     // Mirror pktui's setup: 1 hero + 8 bots, bot pool shuffled with the
     // same RNG that's later used for bot decisions. Seat 0 = hero (no
     // bot); seats 1-8 = shuffled bots.
     let mut session = make_session(10_000);
-    let mut rng = SmallRng::seed_from_u64(3596220112812468068);
+    let mut rng = SmallRng::seed_from_u64(3_596_220_112_812_468_068);
     let mut pool = BotProfile::default_profiles();
     pool.push(BotProfile::joker());
     pool.shuffle(&mut rng);
@@ -175,7 +175,7 @@ fn bot_driven_session_keeps_seat_card_counts_balanced() {
     }
 }
 
-/// Drives a real PlayState (the same struct pktui's binary uses) through
+/// Drives a real `PlayState` (the same struct pktui's binary uses) through
 /// a Stud Hi session. Asserts the card-count invariant after every
 /// successful tick (the same boundary at which the UI would re-render).
 #[test]
@@ -216,8 +216,8 @@ fn playstate_tick_loop_keeps_card_counts_balanced() {
                 state.awaiting
             );
         }
-        if let Some((seat0, c0, _)) = counts.first().copied() {
-            for (seat_i, cards_i, hand_i) in counts.iter().copied() {
+        if let Some(&(seat0, c0, _)) = counts.first() {
+            for &(seat_i, cards_i, hand_i) in &counts {
                 assert_eq!(
                     cards_i, c0,
                     "[playstate step={step}] seat {seat_i} dealt={cards_i} but seat {seat0} \
@@ -293,8 +293,8 @@ fn every_in_hand_seat_has_same_card_count_each_street() {
                 // After every street advance, every in-hand seat must have
                 // the same dealt-card count.
                 let counts = dealt_counts(&session);
-                if let Some((seat0, c0, h0)) = counts.first().copied() {
-                    for (seat_i, cards_i, hand_i) in counts.iter().copied() {
+                if let Some(&(seat0, c0, h0)) = counts.first() {
+                    for &(seat_i, cards_i, hand_i) in &counts {
                         assert_eq!(
                             cards_i, c0,
                             "seat {seat_i} has {cards_i} dealt cards but seat {seat0} has {c0} \
