@@ -447,8 +447,15 @@ mod tests {
         use rand::seq::SliceRandom;
 
         let names = [
-            "You", "abc", "tight_aggressive", "loose_passive", "gto",
-            "short_stack_ninja", "joker", "maniac", "loose_aggressive",
+            "You",
+            "abc",
+            "tight_aggressive",
+            "loose_passive",
+            "gto",
+            "short_stack_ninja",
+            "joker",
+            "maniac",
+            "loose_aggressive",
         ];
         let seats: Vec<SeatNoCell> = names
             .iter()
@@ -513,8 +520,9 @@ mod tests {
                     eprintln!(
                         "step {step}: StreetAdvanced phase={:?} \
                          hero.cards={hero_cards} hero.hand={hero_hand} \
-                         render_slots={slot_count_render} '{hero_format}'"
-                    , session.table.phase);
+                         render_slots={slot_count_render} '{hero_format}'",
+                        session.table.phase
+                    );
                     if session.table.phase == pkcore::games::GamePhase::Stud6th {
                         reached_6th = true;
                         assert_eq!(

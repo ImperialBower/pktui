@@ -94,7 +94,11 @@ fn hero_has_same_card_count_as_opponents_at_every_to_act_moment() {
                 let to_call = session.table.to_call(seat);
                 // Bots raise every 3rd action; hero always calls/checks.
                 let action = if seat == 0 {
-                    if to_call == 0 { PlayerAction::Check } else { PlayerAction::Call }
+                    if to_call == 0 {
+                        PlayerAction::Check
+                    } else {
+                        PlayerAction::Call
+                    }
                 } else {
                     raise_counter += 1;
                     if raise_counter % 3 == 0 && to_call > 0 {
@@ -193,7 +197,10 @@ fn playstate_tick_loop_keeps_card_counts_balanced() {
         let did_progress = match state.tick(&mut log) {
             Ok(p) => p,
             Err(e) => {
-                eprintln!("step {step}: tick err {e:?}; phase={:?}", state.session.table.phase);
+                eprintln!(
+                    "step {step}: tick err {e:?}; phase={:?}",
+                    state.session.table.phase
+                );
                 // Treat as "progress" so we continue; pktui would surface
                 // the error in production. For invariant-checking we just
                 // want to keep advancing.

@@ -329,13 +329,13 @@ mod tests {
     }
 
     #[test]
-    fn new_stud_hi_seats_eight_bots_and_logs_warning() {
+    fn new_stud_hi_seats_six_bots_and_logs_warning() {
         let mut log = LogPanel::new();
         let mut args = ArenaArgs::default();
         args.game.seed = Some(8);
         args.game.variant = Variant::StudHi;
         let s = ArenaState::new(&args, &mut log).unwrap();
-        assert_eq!(s.session.table.seats.0.len(), 8);
+        assert_eq!(s.session.table.seats.0.len(), 6);
         let logged: String = log
             .iter()
             .map(|line| line.text.clone())

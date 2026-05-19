@@ -562,7 +562,11 @@ impl PlayState {
             let _ = writeln!(s, "      hand:");
             for hc in seat.hand.iter() {
                 let vis = if hc.is_up() { "Up" } else { "Down" };
-                let _ = writeln!(s, "        - {{ card: \"{}\", visibility: {vis} }}", hc.card());
+                let _ = writeln!(
+                    s,
+                    "        - {{ card: \"{}\", visibility: {vis} }}",
+                    hc.card()
+                );
             }
         }
         let _ = writeln!(s, "  recent_log:");
@@ -752,14 +756,14 @@ mod tests {
     }
 
     #[test]
-    fn new_stud_hi_seats_eight_players_and_logs_warning() {
+    fn new_stud_hi_seats_six_players_and_logs_warning() {
         let mut log = LogPanel::new();
         let mut args = PlayArgs::default();
         args.game.seed = Some(7);
         args.game.variant = Variant::StudHi;
         let s = PlayState::new(&args, &mut log).unwrap();
-        assert_eq!(s.bots.len(), 7);
-        assert_eq!(s.session.table.seats.0.len(), 8);
+        assert_eq!(s.bots.len(), 5);
+        assert_eq!(s.session.table.seats.0.len(), 6);
         let logged: String = log
             .iter()
             .map(|line| line.text.clone())
