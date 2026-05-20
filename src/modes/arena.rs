@@ -63,6 +63,9 @@ fn build_table(args: &ArenaArgs, seats: SeatsNoCell) -> TableNoCell {
             seats,
             ForcedBets::new(args.game.small_blind, args.game.big_blind),
         ),
+        Variant::Plo => {
+            TableNoCell::plo_from_seats(seats, (args.game.small_blind, args.game.big_blind))
+        }
         Variant::StudHi => TableNoCell::stud_hi_from_seats(
             seats,
             args.game.ante.unwrap_or(10),
@@ -84,6 +87,10 @@ fn start_log_line(args: &ArenaArgs, seed: u64) -> String {
     match args.game.variant {
         Variant::Nlhe => format!(
             "Arena started: NLHE blinds {}/{} starting {} chips, seed={seed}",
+            args.game.small_blind, args.game.big_blind, args.game.chips
+        ),
+        Variant::Plo => format!(
+            "Arena started: PLO blinds {}/{} starting {} chips, seed={seed}",
             args.game.small_blind, args.game.big_blind, args.game.chips
         ),
         Variant::StudHi => format!(

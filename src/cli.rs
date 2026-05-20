@@ -21,9 +21,9 @@ use std::path::PathBuf;
 
 /// Poker variant the engine will run.
 ///
-/// Currently exposed: No-Limit Hold'em (the original/default) and Seven-Card
-/// Stud Hi. FLHE / PLO / Razz exist in pkcore but aren't wired to the CLI
-/// yet — adding them is a one-line enum extension plus a match arm in
+/// Currently exposed: No-Limit Hold'em (default), Pot-Limit Omaha, Seven-Card
+/// Stud Hi, and Razz. FLHE exists in pkcore but isn't wired to the CLI yet —
+/// adding it is a one-line enum extension plus a match arm in
 /// [`crate::modes`].
 ///
 /// # Examples
@@ -37,6 +37,8 @@ pub enum Variant {
     /// No-Limit Hold'em — the historical default.
     #[default]
     Nlhe,
+    /// Pot-Limit Omaha. 4 hole cards, community board, pot-limit bet sizing.
+    Plo,
     /// Seven-Card Stud Hi. UI rendering is preliminary (the table/replay
     /// views still assume the hold'em 4-street + 5-card-board shape).
     StudHi,
@@ -58,13 +60,14 @@ impl Variant {
     /// ```
     /// use pktui::cli::Variant;
     /// assert_eq!(Variant::Nlhe.max_seats(), 9);
+    /// assert_eq!(Variant::Plo.max_seats(), 9);
     /// assert_eq!(Variant::StudHi.max_seats(), 6);
     /// assert_eq!(Variant::Razz.max_seats(), 6);
     /// ```
     #[must_use]
     pub fn max_seats(self) -> usize {
         match self {
-            Self::Nlhe => 9,
+            Self::Nlhe | Self::Plo => 9,
             Self::StudHi | Self::Razz => 6,
         }
     }

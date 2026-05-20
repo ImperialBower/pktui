@@ -14,9 +14,11 @@ table for a ratatui one.
 # from the workspace root, with ../pkcore checked out alongside ../pktui
 cargo run --release                                # default: Play / NLHE (you vs 8 bots)
 cargo run --release -- play                        # same as above, explicit
+cargo run --release -- play --variant plo          # Pot-Limit Omaha (you vs 8 bots)
 cargo run --release -- play --variant stud-hi      # 7-card Stud Hi (you vs 5 bots)
 cargo run --release -- play --variant razz         # 7-card Razz lowball (you vs 5 bots)
 cargo run --release -- arena --speed-ms 400        # all-bot NLHE
+cargo run --release -- arena --variant plo         # all-bot PLO (9 bots)
 cargo run --release -- arena --variant stud-hi     # all-bot Stud Hi (6 bots)
 cargo run --release -- arena --variant razz        # all-bot Razz (6 bots)
 cargo run --release -- replay path/to/session.yaml # step through saved hand history
@@ -27,6 +29,7 @@ cargo run --release -- replay path/to/session.yaml # step through saved hand his
 | Variant   | `--variant` flag | Max seats | Play table | Arena table |
 |-----------|------------------|-----------|------------|-------------|
 | NLHE      | `nlhe` (default) | 9         | 1 hero + 8 bots | 9 bots |
+| PLO       | `plo`            | 9         | 1 hero + 8 bots | 9 bots |
 | Stud Hi   | `stud-hi`        | 6         | 1 hero + 5 bots | 6 bots |
 | Razz      | `razz`           | 6         | 1 hero + 5 bots | 6 bots |
 
@@ -35,13 +38,14 @@ comfortable across 7 streets of dealing.
 
 ### Forced-bet flags by variant
 
-Hold'em-family (NLHE) uses blinds; stud-family (Stud Hi, Razz) uses ante +
-bring-in + small-bet / big-bet. Pass the flags applicable to the variant
-you picked — others are ignored.
+Hold'em-family (NLHE, PLO) uses blinds; stud-family (Stud Hi, Razz) uses
+ante + bring-in + small-bet / big-bet. Pass the flags applicable to the
+variant you picked — others are ignored.
 
 ```sh
-# NLHE — blinds + chips
+# NLHE / PLO — blinds + chips
 cargo run --release -- play --small-blind 50 --big-blind 100 --chips 10000
+cargo run --release -- play --variant plo --small-blind 50 --big-blind 100
 
 # Stud Hi / Razz — ante / bring-in / small-bet / big-bet
 cargo run --release -- play --variant stud-hi \
@@ -68,8 +72,8 @@ section to build against the published crate exclusively.
 | Arena   | `pktui arena`             | Bots only, watch-only. NLHE seats 9, stud-family seats 6. Use `+` / `-` to adjust pace. |
 | Replay  | `pktui replay <FILE>`     | Step through a saved `HandCollection` YAML file.     |
 
-All live modes accept `--variant {nlhe,stud-hi,razz}`, `--seed N`, and
-`--chips N`. Hold'em-family adds `--small-blind` / `--big-blind`;
+All live modes accept `--variant {nlhe,plo,stud-hi,razz}`, `--seed N`, and
+`--chips N`. Hold'em-family (NLHE, PLO) adds `--small-blind` / `--big-blind`;
 stud-family adds `--ante` / `--bring-in` / `--small-bet` / `--big-bet`.
 Arena additionally accepts `--speed-ms N` (default 800).
 

@@ -248,6 +248,9 @@ fn build_table(args: &PlayArgs, seats: SeatsNoCell) -> TableNoCell {
             seats,
             ForcedBets::new(args.game.small_blind, args.game.big_blind),
         ),
+        Variant::Plo => {
+            TableNoCell::plo_from_seats(seats, (args.game.small_blind, args.game.big_blind))
+        }
         Variant::StudHi => TableNoCell::stud_hi_from_seats(
             seats,
             args.game.ante.unwrap_or(10),
@@ -269,6 +272,10 @@ fn start_log_line(args: &PlayArgs, seed: u64) -> String {
     match args.game.variant {
         Variant::Nlhe => format!(
             "Play started: NLHE blinds {}/{} starting {} chips, seed={seed}",
+            args.game.small_blind, args.game.big_blind, args.game.chips
+        ),
+        Variant::Plo => format!(
+            "Play started: PLO blinds {}/{} starting {} chips, seed={seed}",
             args.game.small_blind, args.game.big_blind, args.game.chips
         ),
         Variant::StudHi => format!(
@@ -771,28 +778,48 @@ fn evaluate_hand(
     board: &str,
     board_count: usize,
 ) -> Option<(String, String)> {
+    use pkcore::arrays::four::Four;
     use pkcore::games::GameFamily;
-    let seven = match family {
-        GameFamily::Holdem | GameFamily::Omaha => {
+    use pkcore::games::omaha::OmahaHigh;
+    use pkcore::play::board::Board;
+
+    let scored = match family {
+        GameFamily::Holdem => {
             if board_count != 5 {
                 return None;
             }
-            Seven::from_str(&format!("{hole} {board}")).ok()?
+            let seven = Seven::from_str(&format!("{hole} {board}")).ok()?;
+            let (hand_rank, hand) = seven.hand_rank_and_hand();
+            Eval::new(hand_rank, hand)
         }
-        GameFamily::StudHi | GameFamily::Razz => {
+        GameFamily::Omaha => {
+            if board_count != 5 || hole.split_whitespace().count() != 4 {
+                return None;
+            }
+            let four = Four::from_str(hole).ok()?;
+            let board_obj = Board::from_str(board).ok()?;
+            OmahaHigh { hand: four }.eval(&board_obj)
+        }
+        GameFamily::StudHi => {
             if hole.split_whitespace().count() != 7 {
                 return None;
             }
-            Seven::from_str(hole).ok()?
+            let seven = Seven::from_str(hole).ok()?;
+            let (hand_rank, hand) = seven.hand_rank_and_hand();
+            Eval::new(hand_rank, hand)
+        }
+        GameFamily::Razz => {
+            if hole.split_whitespace().count() != 7 {
+                return None;
+            }
+            let seven = Seven::from_str(hole).ok()?;
+            Eval::from_seven_razz(&seven).ok()?
         }
     };
-    let eval = if matches!(family, GameFamily::Razz) {
-        Eval::from_seven_razz(&seven).ok()?
-    } else {
-        let (hand_rank, hand) = seven.hand_rank_and_hand();
-        Eval::new(hand_rank, hand)
-    };
-    Some((eval.hand.to_string(), format!("{:?}", eval.hand_rank.class)))
+    Some((
+        scored.hand.to_string(),
+        format!("{:?}", scored.hand_rank.class),
+    ))
 }
 
 #[cfg(test)]
