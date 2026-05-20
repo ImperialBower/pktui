@@ -186,7 +186,13 @@ pub const HERO_NAME: &str = "You";
 ///
 /// ```
 /// use pktui::modes::play::ShowdownSeat;
-/// let s = ShowdownSeat { seat: 1, name: "gto".into(), hole: "Ah Kh".into(), hand_class: Some("Two Pair".into()) };
+/// let s = ShowdownSeat {
+///     seat: 1,
+///     name: "gto".into(),
+///     hole: "Ah Kh".into(),
+///     best_hand: Some("A♥ K♥ Q♠ J♣ T♦".into()),
+///     hand_class: Some("AceHighStraight".into()),
+/// };
 /// assert_eq!(s.seat, 1);
 /// ```
 #[derive(Debug, Clone)]
@@ -197,8 +203,12 @@ pub struct ShowdownSeat {
     pub name: String,
     /// Hole cards as a display string, e.g. `"Ah Kh"`.
     pub hole: String,
-    /// Best 5-card hand class (e.g. `"Pair of Kings"`), if a full 5-card
-    /// board was available to evaluate against.
+    /// Best 5-card hand picked from the 7 available cards (hole + board for
+    /// Hold'em, 7 hole for stud-family), sorted by the evaluator. Only `Some`
+    /// once enough cards are visible to evaluate (river for Hold'em, 7th
+    /// street for stud-family).
+    pub best_hand: Option<String>,
+    /// Best 5-card hand class label (e.g. `"OnePair"`, `"Lowball"`).
     pub hand_class: Option<String>,
 }
 
@@ -245,6 +255,13 @@ fn build_table(args: &PlayArgs, seats: SeatsNoCell) -> TableNoCell {
             args.game.small_bet.unwrap_or(args.game.small_blind),
             args.game.big_bet.unwrap_or(args.game.big_blind),
         ),
+        Variant::Razz => TableNoCell::razz_from_seats(
+            seats,
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+        ),
     }
 }
 
@@ -256,6 +273,14 @@ fn start_log_line(args: &PlayArgs, seed: u64) -> String {
         ),
         Variant::StudHi => format!(
             "Play started: Stud Hi ante {} / bring-in {} / bets {}-{} starting {} chips, seed={seed}",
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+            args.game.chips,
+        ),
+        Variant::Razz => format!(
+            "Play started: Razz ante {} / bring-in {} / bets {}-{} starting {} chips, seed={seed}",
             args.game.ante.unwrap_or(10),
             args.game.bring_in.unwrap_or(25),
             args.game.small_bet.unwrap_or(args.game.small_blind),
@@ -441,9 +466,10 @@ impl PlayState {
                 let showdown = capture_showdown(&self.session.table, n, |s| self.seat_name(s));
                 if let Some(rows) = &showdown {
                     for row in rows {
-                        let suffix = match &row.hand_class {
-                            Some(c) => format!(" — {c}"),
-                            None => String::new(),
+                        let suffix = match (&row.best_hand, &row.hand_class) {
+                            (Some(best), Some(class)) => format!(" — best [{best}] {class}"),
+                            (None, Some(class)) => format!(" — {class}"),
+                            _ => String::new(),
                         };
                         log.push(
                             Severity::Info,
@@ -710,6 +736,7 @@ pub fn capture_showdown<F: Fn(u8) -> String>(
                 seat: i,
                 name: name_of(i),
                 hole,
+                best_hand: None,
                 hand_class: None,
             })
         })
@@ -719,21 +746,53 @@ pub fn capture_showdown<F: Fn(u8) -> String>(
         return None;
     }
 
+    let family = table.game.family();
     let board = table.board.to_string();
-    if board.split_whitespace().count() == 5 {
-        for row in &mut active {
-            row.hand_class = hand_class(&row.hole, &board);
+    let board_count = board.split_whitespace().count();
+    for row in &mut active {
+        if let Some((best, class)) = evaluate_hand(family, &row.hole, &board, board_count) {
+            row.best_hand = Some(best);
+            row.hand_class = Some(class);
         }
     }
 
     Some(active)
 }
 
-fn hand_class(hole: &str, board: &str) -> Option<String> {
-    let seven = Seven::from_str(&format!("{hole} {board}")).ok()?;
-    let (hand_rank, hand) = seven.hand_rank_and_hand();
-    let eval = Eval::new(hand_rank, hand);
-    Some(format!("{:?}", eval.hand_rank.class))
+/// Evaluates a player's best 5-card hand for the given game family.
+///
+/// Returns `(best_hand_display, hand_class_label)` when there are enough
+/// cards to evaluate (river for Hold'em, 7th street for stud-family);
+/// otherwise `None`. Razz uses the A-5 lowball evaluator; everything else
+/// uses the standard high-hand evaluator.
+fn evaluate_hand(
+    family: pkcore::games::GameFamily,
+    hole: &str,
+    board: &str,
+    board_count: usize,
+) -> Option<(String, String)> {
+    use pkcore::games::GameFamily;
+    let seven = match family {
+        GameFamily::Holdem | GameFamily::Omaha => {
+            if board_count != 5 {
+                return None;
+            }
+            Seven::from_str(&format!("{hole} {board}")).ok()?
+        }
+        GameFamily::StudHi | GameFamily::Razz => {
+            if hole.split_whitespace().count() != 7 {
+                return None;
+            }
+            Seven::from_str(hole).ok()?
+        }
+    };
+    let eval = if matches!(family, GameFamily::Razz) {
+        Eval::from_seven_razz(&seven).ok()?
+    } else {
+        let (hand_rank, hand) = seven.hand_rank_and_hand();
+        Eval::new(hand_rank, hand)
+    };
+    Some((eval.hand.to_string(), format!("{:?}", eval.hand_rank.class)))
 }
 
 #[cfg(test)]

@@ -130,11 +130,12 @@ fn seat_rows<F: Fn(u8) -> String>(
         // folded players never appear here.
         let revealed = showdown.and_then(|s| s.iter().find(|r| r.seat == i));
         let (hole, is_revealed) = if let Some(r) = revealed {
-            let class = r
-                .hand_class
-                .as_deref()
-                .map_or_else(String::new, |c| format!(" {c}"));
-            (format!("{}{class}", r.hole), true)
+            let suffix = match (r.best_hand.as_deref(), r.hand_class.as_deref()) {
+                (Some(top), Some(class)) => format!("  [{top}] {class}"),
+                (None, Some(class)) => format!("  {class}"),
+                _ => String::new(),
+            };
+            (format!("{}{suffix}", r.hole), true)
         } else if seat_data.cards.has_cards() {
             let as_owner = hero_seat == Some(i) || hero_seat.is_none();
             (format_hole(seat_data, as_owner), false)
@@ -259,9 +260,11 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         Constraint::Length(22),
         Constraint::Length(10),
         Constraint::Length(8),
-        // Wide enough for a 7-card Stud hand with bracketed down cards or
-        // ?? placeholders (e.g. "[A♠] [K♠] Q♥ J♥ T♥ 9♥ [4♣]").
-        Constraint::Length(36),
+        // Wide enough to hold either a 7-card Stud hand (e.g.
+        // "[A♠] [K♠] Q♥ J♥ T♥ 9♥ [4♣]" ≈ 34 chars) or a showdown reveal
+        // string (7 hole + " [best5] LongClassName" ≈ 60 chars). Stretches
+        // to fill spare width via `Constraint::Min`.
+        Constraint::Min(60),
         Constraint::Length(8),
     ];
 

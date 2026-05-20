@@ -70,6 +70,13 @@ fn build_table(args: &ArenaArgs, seats: SeatsNoCell) -> TableNoCell {
             args.game.small_bet.unwrap_or(args.game.small_blind),
             args.game.big_bet.unwrap_or(args.game.big_blind),
         ),
+        Variant::Razz => TableNoCell::razz_from_seats(
+            seats,
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+        ),
     }
 }
 
@@ -81,6 +88,14 @@ fn start_log_line(args: &ArenaArgs, seed: u64) -> String {
         ),
         Variant::StudHi => format!(
             "Arena started: Stud Hi ante {} / bring-in {} / bets {}-{} starting {} chips, seed={seed}",
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+            args.game.chips,
+        ),
+        Variant::Razz => format!(
+            "Arena started: Razz ante {} / bring-in {} / bets {}-{} starting {} chips, seed={seed}",
             args.game.ante.unwrap_or(10),
             args.game.bring_in.unwrap_or(25),
             args.game.small_bet.unwrap_or(args.game.small_blind),

@@ -86,6 +86,7 @@ fn next_hand_clears_showdown_snapshot() {
             seat: 1,
             name: "fake".into(),
             hole: "Ah Kh".into(),
+            best_hand: None,
             hand_class: None,
         }]);
         // Pretend the hand just ended.

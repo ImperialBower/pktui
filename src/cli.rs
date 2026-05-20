@@ -40,6 +40,9 @@ pub enum Variant {
     /// Seven-Card Stud Hi. UI rendering is preliminary (the table/replay
     /// views still assume the hold'em 4-street + 5-card-board shape).
     StudHi,
+    /// Seven-Card Stud lowball (A-5 evaluator). UI rendering is preliminary —
+    /// same caveats as `StudHi`.
+    Razz,
 }
 
 impl Variant {
@@ -56,12 +59,13 @@ impl Variant {
     /// use pktui::cli::Variant;
     /// assert_eq!(Variant::Nlhe.max_seats(), 9);
     /// assert_eq!(Variant::StudHi.max_seats(), 6);
+    /// assert_eq!(Variant::Razz.max_seats(), 6);
     /// ```
     #[must_use]
     pub fn max_seats(self) -> usize {
         match self {
             Self::Nlhe => 9,
-            Self::StudHi => 6,
+            Self::StudHi | Self::Razz => 6,
         }
     }
 }

@@ -12,11 +12,47 @@ table for a ratatui one.
 
 ```sh
 # from the workspace root, with ../pkcore checked out alongside ../pktui
-cargo run --release            # default: Play mode (you vs 8 bots)
-cargo run --release -- play
-cargo run --release -- arena --speed-ms 400
-cargo run --release -- replay path/to/session.yaml
+cargo run --release                                # default: Play / NLHE (you vs 8 bots)
+cargo run --release -- play                        # same as above, explicit
+cargo run --release -- play --variant stud-hi      # 7-card Stud Hi (you vs 5 bots)
+cargo run --release -- play --variant razz         # 7-card Razz lowball (you vs 5 bots)
+cargo run --release -- arena --speed-ms 400        # all-bot NLHE
+cargo run --release -- arena --variant stud-hi     # all-bot Stud Hi (6 bots)
+cargo run --release -- arena --variant razz        # all-bot Razz (6 bots)
+cargo run --release -- replay path/to/session.yaml # step through saved hand history
 ```
+
+### Variants and seat caps
+
+| Variant   | `--variant` flag | Max seats | Play table | Arena table |
+|-----------|------------------|-----------|------------|-------------|
+| NLHE      | `nlhe` (default) | 9         | 1 hero + 8 bots | 9 bots |
+| Stud Hi   | `stud-hi`        | 6         | 1 hero + 5 bots | 6 bots |
+| Razz      | `razz`           | 6         | 1 hero + 5 bots | 6 bots |
+
+Stud-family variants are capped at 6 seats to keep the 52-card deck
+comfortable across 7 streets of dealing.
+
+### Forced-bet flags by variant
+
+Hold'em-family (NLHE) uses blinds; stud-family (Stud Hi, Razz) uses ante +
+bring-in + small-bet / big-bet. Pass the flags applicable to the variant
+you picked — others are ignored.
+
+```sh
+# NLHE — blinds + chips
+cargo run --release -- play --small-blind 50 --big-blind 100 --chips 10000
+
+# Stud Hi / Razz — ante / bring-in / small-bet / big-bet
+cargo run --release -- play --variant stud-hi \
+    --ante 10 --bring-in 25 --small-bet 50 --big-bet 100 --chips 10000
+cargo run --release -- play --variant razz \
+    --ante 10 --bring-in 25 --small-bet 50 --big-bet 100
+```
+
+If `--small-bet` / `--big-bet` are omitted for stud-family, they fall back
+to `--small-blind` / `--big-blind` so the existing NLHE defaults still
+produce a playable Stud / Razz table.
 
 `pktui` uses Rust edition 2024 and pins `rust-version = 1.94.1`. The
 [`Cargo.toml`](Cargo.toml) declares `pkcore` as a `crates.io` dependency but
@@ -28,12 +64,14 @@ section to build against the published crate exclusively.
 
 | Mode    | Subcommand                | Description                                          |
 |---------|---------------------------|------------------------------------------------------|
-| Play    | `pktui play`              | One human at seat 0, eight bots at seats 1–8.        |
-| Arena   | `pktui arena`             | Nine bots, watch-only. Use `+` / `-` to adjust pace. |
+| Play    | `pktui play`              | One human at seat 0; bots at the remaining seats. NLHE seats 8 bots, stud-family seats 5. |
+| Arena   | `pktui arena`             | Bots only, watch-only. NLHE seats 9, stud-family seats 6. Use `+` / `-` to adjust pace. |
 | Replay  | `pktui replay <FILE>`     | Step through a saved `HandCollection` YAML file.     |
 
-All live modes accept `--seed N`, `--small-blind N`, `--big-blind N`,
-`--chips N`. Arena additionally accepts `--speed-ms N` (default 800).
+All live modes accept `--variant {nlhe,stud-hi,razz}`, `--seed N`, and
+`--chips N`. Hold'em-family adds `--small-blind` / `--big-blind`;
+stud-family adds `--ante` / `--bring-in` / `--small-bet` / `--big-bet`.
+Arena additionally accepts `--speed-ms N` (default 800).
 
 ## Keyboard
 
@@ -41,6 +79,7 @@ All live modes accept `--seed N`, `--small-blind N`, `--big-blind N`,
 |------------|----------------|-----------------------------------------------------------------|
 | Global     | `?`            | Toggle help overlay                                             |
 | Global     | `q` / `Ctrl+C` | Quit                                                            |
+| Global     | `D`            | Dump Play state to `./pktui-dump-<seed>-<phase>-<unix>.yaml`    |
 | Play       | `f`            | Fold                                                            |
 | Play       | `k`            | Check                                                           |
 | Play       | `c`            | Call                                                            |
