@@ -56,7 +56,7 @@ pub struct ArenaState {
     pub seed: u64,
 }
 
-/// Mirrors [`crate::modes::play::build_table`] for arena's args struct.
+/// Mirrors `play::build_table` for arena's args struct.
 fn build_table(args: &ArenaArgs, seats: SeatsNoCell) -> TableNoCell {
     match args.game.variant {
         Variant::Nlhe => TableNoCell::nlh_from_seats(
