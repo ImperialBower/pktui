@@ -13,7 +13,7 @@ use pkcore::casino::table_no_cell::{PlayerNoCell, SeatNoCell, SeatsNoCell, Table
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 
-use crate::cli::ArenaArgs;
+use crate::cli::{ArenaArgs, Variant};
 use crate::error::Result;
 use crate::log_panel::{LogPanel, Severity};
 use crate::modes::play::describe_action;
@@ -56,6 +56,62 @@ pub struct ArenaState {
     pub seed: u64,
 }
 
+/// Mirrors `play::build_table` for arena's args struct.
+fn build_table(args: &ArenaArgs, seats: SeatsNoCell) -> TableNoCell {
+    match args.game.variant {
+        Variant::Nlhe => TableNoCell::nlh_from_seats(
+            seats,
+            ForcedBets::new(args.game.small_blind, args.game.big_blind),
+        ),
+        Variant::Plo => {
+            TableNoCell::plo_from_seats(seats, (args.game.small_blind, args.game.big_blind))
+        }
+        Variant::StudHi => TableNoCell::stud_hi_from_seats(
+            seats,
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+        ),
+        Variant::Razz => TableNoCell::razz_from_seats(
+            seats,
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+        ),
+    }
+}
+
+fn start_log_line(args: &ArenaArgs, seed: u64) -> String {
+    match args.game.variant {
+        Variant::Nlhe => format!(
+            "Arena started: NLHE blinds {}/{} starting {} chips, seed={seed}",
+            args.game.small_blind, args.game.big_blind, args.game.chips
+        ),
+        Variant::Plo => format!(
+            "Arena started: PLO blinds {}/{} starting {} chips, seed={seed}",
+            args.game.small_blind, args.game.big_blind, args.game.chips
+        ),
+        Variant::StudHi => format!(
+            "Arena started: Stud Hi ante {} / bring-in {} / bets {}-{} starting {} chips, seed={seed}",
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+            args.game.chips,
+        ),
+        Variant::Razz => format!(
+            "Arena started: Razz ante {} / bring-in {} / bets {}-{} starting {} chips, seed={seed}",
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+            args.game.chips,
+        ),
+    }
+}
+
 impl ArenaState {
     /// Initialises an Arena session with 9 bots seated.
     ///
@@ -77,10 +133,12 @@ impl ArenaState {
     /// ```
     pub fn new(args: &ArenaArgs, log: &mut LogPanel) -> Result<Self> {
         let (mut rng, seed) = seeded_rng(args.game.seed);
+        // Stud-family games cap at 8 seats total (52-card deck constraint).
+        let bot_count = args.game.variant.max_seats();
         let mut pool = BotProfile::default_profiles();
         pool.push(BotProfile::joker());
         pool.shuffle(&mut rng);
-        let bots: Vec<BotProfile> = pool.into_iter().take(9).collect();
+        let bots: Vec<BotProfile> = pool.into_iter().take(bot_count).collect();
 
         let seats: Vec<SeatNoCell> = bots
             .iter()
@@ -92,20 +150,19 @@ impl ArenaState {
             })
             .collect();
 
-        let table = TableNoCell::nlh_from_seats(
-            SeatsNoCell::new(seats),
-            ForcedBets::new(args.game.small_blind, args.game.big_blind),
-        );
+        let table = build_table(args, SeatsNoCell::new(seats));
 
         let mut session = PokerSession::new(table);
         session.start_hand()?;
-        log.push(
-            Severity::Info,
-            format!(
-                "Arena started: blinds {}/{} starting {} chips, seed={seed}",
-                args.game.small_blind, args.game.big_blind, args.game.chips
-            ),
-        );
+        log.push(Severity::Info, start_log_line(args, seed));
+        if args.game.variant != Variant::Nlhe {
+            log.push(
+                Severity::Info,
+                "Note: UI rendering for non-NLHE variants is preliminary — \
+                 board/street labels assume Hold'em."
+                    .to_string(),
+            );
+        }
         log.push(Severity::Info, "Hand 1 dealt".to_string());
 
         Ok(Self {
@@ -278,7 +335,7 @@ fn speed_millis(d: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::ArenaArgs;
+    use crate::cli::{ArenaArgs, Variant};
 
     fn arena_with_seed(seed: u64) -> ArenaState {
         let mut log = LogPanel::new();
@@ -291,6 +348,23 @@ mod tests {
     fn nine_bots_seated() {
         let s = arena_with_seed(1);
         assert_eq!(s.session.table.seats.0.len(), 9);
+    }
+
+    #[test]
+    fn new_stud_hi_seats_six_bots_and_logs_warning() {
+        let mut log = LogPanel::new();
+        let mut args = ArenaArgs::default();
+        args.game.seed = Some(8);
+        args.game.variant = Variant::StudHi;
+        let s = ArenaState::new(&args, &mut log).unwrap();
+        assert_eq!(s.session.table.seats.0.len(), 6);
+        let logged: String = log
+            .iter()
+            .map(|line| line.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(logged.contains("Stud Hi"), "log was: {logged}");
+        assert!(logged.contains("preliminary"), "log was: {logged}");
     }
 
     #[test]

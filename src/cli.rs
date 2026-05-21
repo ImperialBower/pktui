@@ -4,15 +4,74 @@
 //! UI modes:
 //!
 //! ```text
-//! pktui play   [--seed N] [--blinds 50/100] [--chips 10000]
-//! pktui arena  [--seed N] [--blinds 50/100] [--chips 10000] [--speed-ms 800]
+//! pktui play   [--variant nlhe|stud-hi] [--seed N] [--blinds 50/100] [--chips 10000]
+//!              [--ante N] [--bring-in N] [--small-bet N] [--big-bet N]
+//! pktui arena  [--variant nlhe|stud-hi] [--seed N] [--blinds 50/100] [--chips 10000]
+//!              [--ante N] [--bring-in N] [--small-bet N] [--big-bet N] [--speed-ms 800]
 //! pktui replay <FILE>
 //! ```
 //!
-//! Default subcommand (no args) is `play`.
+//! Default subcommand (no args) is `play`. Default variant is `nlhe`. For
+//! stud-family variants, `--ante` / `--bring-in` / `--small-bet` / `--big-bet`
+//! apply; for hold'em-family variants, `--small-blind` / `--big-blind` apply.
+//! Irrelevant forced-bet flags are ignored for the chosen variant.
 
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
+
+/// Poker variant the engine will run.
+///
+/// Currently exposed: No-Limit Hold'em (default), Pot-Limit Omaha, Seven-Card
+/// Stud Hi, and Razz. FLHE exists in pkcore but isn't wired to the CLI yet —
+/// adding it is a one-line enum extension plus a match arm in
+/// [`crate::modes`].
+///
+/// # Examples
+///
+/// ```
+/// use pktui::cli::Variant;
+/// assert_eq!(Variant::default(), Variant::Nlhe);
+/// ```
+#[derive(ValueEnum, Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Variant {
+    /// No-Limit Hold'em — the historical default.
+    #[default]
+    Nlhe,
+    /// Pot-Limit Omaha. 4 hole cards, community board, pot-limit bet sizing.
+    Plo,
+    /// Seven-Card Stud Hi. UI rendering is preliminary (the table/replay
+    /// views still assume the hold'em 4-street + 5-card-board shape).
+    StudHi,
+    /// Seven-Card Stud lowball (A-5 evaluator). UI rendering is preliminary —
+    /// same caveats as `StudHi`.
+    Razz,
+}
+
+impl Variant {
+    /// Maximum number of seats supported by this variant.
+    ///
+    /// Stud-family games deal 7 cards per player. The 52-card deck would
+    /// technically seat 8 (8 × 7 = 56 with a card-recycle), but pktui caps
+    /// at 6 to keep the table playable and the deck comfortable.
+    /// NLHE / PLO use community cards, so they comfortably seat 9.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::cli::Variant;
+    /// assert_eq!(Variant::Nlhe.max_seats(), 9);
+    /// assert_eq!(Variant::Plo.max_seats(), 9);
+    /// assert_eq!(Variant::StudHi.max_seats(), 6);
+    /// assert_eq!(Variant::Razz.max_seats(), 6);
+    /// ```
+    #[must_use]
+    pub fn max_seats(self) -> usize {
+        match self {
+            Self::Nlhe | Self::Plo => 9,
+            Self::StudHi | Self::Razz => 6,
+        }
+    }
+}
 
 /// Top-level CLI definition.
 ///
@@ -70,27 +129,47 @@ pub enum Command {
 /// which is the surprise we'd otherwise spend an afternoon debugging.
 #[derive(Args, Debug, Clone)]
 pub struct GameArgs {
+    /// Poker variant to deal. Defaults to NLHE.
+    #[arg(long, value_enum, default_value_t = Variant::Nlhe)]
+    pub variant: Variant,
     /// Override the RNG seed (useful for reproducible sessions and tests).
     #[arg(long)]
     pub seed: Option<u64>,
-    /// Small blind in chips.
+    /// Small blind in chips (hold'em-family variants only).
     #[arg(long, default_value_t = 50)]
     pub small_blind: usize,
-    /// Big blind in chips.
+    /// Big blind in chips (hold'em-family variants only).
     #[arg(long, default_value_t = 100)]
     pub big_blind: usize,
     /// Starting stack per seat.
     #[arg(long, default_value_t = 10_000)]
     pub chips: usize,
+    /// Ante per seat (stud-family variants only).
+    #[arg(long)]
+    pub ante: Option<usize>,
+    /// Bring-in (stud-family variants only).
+    #[arg(long)]
+    pub bring_in: Option<usize>,
+    /// Small bet for fixed-limit games (falls back to `--small-blind`).
+    #[arg(long)]
+    pub small_bet: Option<usize>,
+    /// Big bet for fixed-limit games (falls back to `--big-blind`).
+    #[arg(long)]
+    pub big_bet: Option<usize>,
 }
 
 impl Default for GameArgs {
     fn default() -> Self {
         Self {
+            variant: Variant::Nlhe,
             seed: None,
             small_blind: 50,
             big_blind: 100,
             chips: 10_000,
+            ante: None,
+            bring_in: None,
+            small_bet: None,
+            big_bet: None,
         }
     }
 }
@@ -217,5 +296,75 @@ mod tests {
     fn resolved_defaults_to_play() {
         let cli = Cli::try_parse_from(["pktui"]).unwrap();
         assert!(matches!(cli.resolved(), Command::Play(_)));
+    }
+
+    #[test]
+    fn play_variant_default_is_nlhe() {
+        let cli = Cli::try_parse_from(["pktui", "play"]).unwrap();
+        match cli.resolved() {
+            Command::Play(p) => assert_eq!(p.game.variant, Variant::Nlhe),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn parses_play_variant_stud_hi() {
+        let cli = Cli::try_parse_from(["pktui", "play", "--variant", "stud-hi"]).unwrap();
+        match cli.resolved() {
+            Command::Play(p) => assert_eq!(p.game.variant, Variant::StudHi),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn parses_arena_variant_stud_hi() {
+        let cli = Cli::try_parse_from(["pktui", "arena", "--variant", "stud-hi"]).unwrap();
+        match cli.resolved() {
+            Command::Arena(a) => assert_eq!(a.game.variant, Variant::StudHi),
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn parses_stud_hi_with_ante_bring_in() {
+        let cli = Cli::try_parse_from([
+            "pktui",
+            "play",
+            "--variant",
+            "stud-hi",
+            "--ante",
+            "5",
+            "--bring-in",
+            "15",
+            "--small-bet",
+            "25",
+            "--big-bet",
+            "50",
+        ])
+        .unwrap();
+        match cli.resolved() {
+            Command::Play(p) => {
+                assert_eq!(p.game.variant, Variant::StudHi);
+                assert_eq!(p.game.ante, Some(5));
+                assert_eq!(p.game.bring_in, Some(15));
+                assert_eq!(p.game.small_bet, Some(25));
+                assert_eq!(p.game.big_bet, Some(50));
+            }
+            _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn nlhe_defaults_leave_stud_fields_none() {
+        let cli = Cli::try_parse_from(["pktui", "play"]).unwrap();
+        match cli.resolved() {
+            Command::Play(p) => {
+                assert_eq!(p.game.ante, None);
+                assert_eq!(p.game.bring_in, None);
+                assert_eq!(p.game.small_bet, None);
+                assert_eq!(p.game.big_bet, None);
+            }
+            _ => panic!(),
+        }
     }
 }

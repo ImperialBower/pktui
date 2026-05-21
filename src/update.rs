@@ -34,6 +34,8 @@ pub enum Msg {
     Quit,
     /// User pressed `?` to toggle the help overlay.
     ToggleHelp,
+    /// User pressed `D` to dump the current Play state to a YAML file.
+    Dump,
     /// Live modes: user picked a [`PlayerAction`].
     Action(PlayerAction),
     /// Play mode: start the next hand after `HandComplete`.
@@ -109,6 +111,9 @@ fn key_to_msg(app: &App, key: &KeyEvent) -> Msg {
     }
     if matches!(key.code, KeyCode::Char('?')) {
         return Msg::ToggleHelp;
+    }
+    if matches!(key.code, KeyCode::Char('D')) {
+        return Msg::Dump;
     }
 
     match &app.mode {
@@ -188,6 +193,7 @@ pub fn update(app: &mut App, msg: Msg) -> Result<()> {
     match msg {
         Msg::Quit => app.quit(),
         Msg::ToggleHelp => app.toggle_help(),
+        Msg::Dump => dump_play_state(app),
         Msg::Noop => {}
         Msg::Tick => match &mut app.mode {
             AppMode::Play(p) => {
@@ -284,6 +290,21 @@ pub fn update(app: &mut App, msg: Msg) -> Result<()> {
     Ok(())
 }
 
+fn dump_play_state(app: &mut App) {
+    if let AppMode::Play(p) = &app.mode {
+        match p.dump_state(&app.log) {
+            Ok(path) => app.log.push(
+                crate::log_panel::Severity::Info,
+                format!("Dumped state to {}", path.display()),
+            ),
+            Err(e) => app.log.push(
+                crate::log_panel::Severity::Error,
+                format!("Dump failed: {e}"),
+            ),
+        }
+    }
+}
+
 fn bet_preset(app: &mut App, preset: usize) {
     let AppMode::Play(p) = &mut app.mode else {
         return;
@@ -300,10 +321,21 @@ fn bet_preset(app: &mut App, preset: usize) {
     } else {
         table.bet + table.min_raise()
     };
-    let amount = match preset {
-        1 => (pot / 2).max(min), // "half pot"
-        2 => pot.max(min),       // "pot"
-        _ => min,                // 0 = "min" + any out-of-range sentinel
+    // Fixed-limit has only one legal bet/raise amount per street, so every
+    // preset key collapses to that amount — the ½pot / pot presets don't
+    // make sense in this structure.
+    let is_fixed_limit = matches!(
+        table.betting,
+        pkcore::games::betting_structure::BettingStructure::FixedLimit { .. }
+    );
+    let amount = if is_fixed_limit {
+        min
+    } else {
+        match preset {
+            1 => (pot / 2).max(min), // "half pot"
+            2 => pot.max(min),       // "pot"
+            _ => min,                // 0 = "min" + any out-of-range sentinel
+        }
     };
     p.bet.set(amount);
 }

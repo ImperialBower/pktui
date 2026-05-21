@@ -24,6 +24,7 @@ pub fn render_overlay(frame: &mut Frame, area: Rect) {
         Line::raw("Global"),
         Line::raw("  ?  toggle this help"),
         Line::raw("  q / Ctrl+C  quit"),
+        Line::raw("  D  dump Play state to ./pktui-dump-*.yaml"),
         Line::raw(""),
         Line::raw("Play (your turn)"),
         Line::raw("  f fold   k check   c call   a all-in"),

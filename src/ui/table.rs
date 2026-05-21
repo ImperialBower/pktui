@@ -15,7 +15,8 @@
 //! The seat list uses a [`Table`](ratatui::widgets::Table) widget so columns
 //! stay aligned and the active seat can be highlighted.
 
-use pkcore::casino::table_no_cell::TableNoCell;
+use pkcore::casino::table_no_cell::{SeatNoCell, TableNoCell};
+use pkcore::play::hole_card::HoleCard;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -129,18 +130,15 @@ fn seat_rows<F: Fn(u8) -> String>(
         // folded players never appear here.
         let revealed = showdown.and_then(|s| s.iter().find(|r| r.seat == i));
         let (hole, is_revealed) = if let Some(r) = revealed {
-            let class = r
-                .hand_class
-                .as_deref()
-                .map_or_else(String::new, |c| format!(" {c}"));
-            (format!("{}{class}", r.hole), true)
-        } else if seat_data.cards.has_cards() {
-            let s = if hero_seat == Some(i) || hero_seat.is_none() {
-                seat_data.cards.sorted_display()
-            } else {
-                "[??]".into()
+            let suffix = match (r.best_hand.as_deref(), r.hand_class.as_deref()) {
+                (Some(top), Some(class)) => format!("  [{top}] {class}"),
+                (None, Some(class)) => format!("  {class}"),
+                _ => String::new(),
             };
-            (s, false)
+            (format!("{}{suffix}", r.hole), true)
+        } else if seat_data.cards.has_cards() {
+            let as_owner = hero_seat == Some(i) || hero_seat.is_none();
+            (format_hole(seat_data, as_owner), false)
         } else {
             (String::new(), false)
         };
@@ -172,6 +170,76 @@ fn seat_rows<F: Fn(u8) -> String>(
     out
 }
 
+/// Formats a seat's hand for the table view.
+///
+/// Branches on visibility — for stud-family variants where `seat.hand`
+/// carries face-up cards, opponents see those up-cards in dealt order and
+/// `??` for each face-down card; the seat's owner sees the full hand with
+/// face-down cards bracketed (`[K♠]`) to indicate concealment from the
+/// other players. For NLHE/PLO where every card is face-down, opponents
+/// see `[??]` (unchanged from before) and the owner sees the sorted
+/// display (also unchanged).
+fn format_hole(seat: &SeatNoCell, as_owner: bool) -> String {
+    let hand_slice = seat.hand.as_slice();
+    let any_up = hand_slice.iter().any(HoleCard::is_up);
+
+    // Dealt cards in dealt order (skipping unfilled blank slots). This is
+    // the always-populated source — pkcore's dealer mirrors every dealt
+    // card here regardless of variant. We use it as the count of truth
+    // so the display never drops a dealt card even if `seat.hand` is
+    // somehow shorter (which shouldn't happen, but lets us survive it).
+    let dealt: Vec<pkcore::card::Card> = seat
+        .cards
+        .as_slice()
+        .iter()
+        .copied()
+        .filter(|c| *c != pkcore::card::Card::BLANK)
+        .collect();
+
+    if !any_up {
+        // NLHE/PLO: every card face-down. Owner sees the sorted hand;
+        // opponents see a single hidden placeholder.
+        return if as_owner {
+            seat.cards.sorted_display()
+        } else {
+            "[??]".to_string()
+        };
+    }
+
+    // Stud-style: walk the dealt cards in order, looking up per-card
+    // visibility from `seat.hand`. For any tail card the hand doesn't
+    // cover, fall back to the stud dealing pattern (positions 0–1 down,
+    // 2–5 up, 6 down) so a length mismatch can't silently hide a card.
+    dealt
+        .iter()
+        .enumerate()
+        .map(|(idx, card)| {
+            let is_up = hand_slice
+                .get(idx)
+                .map_or_else(|| matches!(idx, 2..=5), HoleCard::is_up);
+            if as_owner {
+                if is_up {
+                    pad_card_slot(&card.to_string())
+                } else {
+                    pad_card_slot(&format!("[{card}]"))
+                }
+            } else if is_up {
+                pad_card_slot(&card.to_string())
+            } else {
+                " ?? ".to_string()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+/// Right-aligns a card representation to a 4-char slot so `[A♠]`, ` A♠`,
+/// `  ??`, and `  Q♥` all occupy the same column. Width is in Unicode
+/// scalar values (chars), which matches Rust's `format!` width semantics.
+fn pad_card_slot(s: &str) -> String {
+    format!("{s:>4}")
+}
+
 fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
     let header = Row::new(vec![
         Cell::from("#"),
@@ -192,7 +260,11 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         Constraint::Length(22),
         Constraint::Length(10),
         Constraint::Length(8),
-        Constraint::Length(28),
+        // Wide enough to hold either a 7-card Stud hand (e.g.
+        // "[A♠] [K♠] Q♥ J♥ T♥ 9♥ [4♣]" ≈ 34 chars) or a showdown reveal
+        // string (7 hole + " [best5] LongClassName" ≈ 60 chars). Stretches
+        // to fill spare width via `Constraint::Min`.
+        Constraint::Min(60),
         Constraint::Length(8),
     ];
 
@@ -249,37 +321,42 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
 }
 
 fn render_board(table: &TableNoCell, frame: &mut Frame, area: Rect) {
-    let board_str = table.board.to_string();
-    let board_display = if board_str.is_empty() {
-        "(pre-flop)".to_string()
-    } else {
-        board_str
-    };
+    let has_board = table.game.family().uses_community_board();
     let pot = table.effective_pot();
     let phase = format!("{:?}", table.phase);
-    let text = Text::from(vec![Line::from(vec![
-        Span::styled("Board: ", Style::default().fg(Color::Gray)),
-        Span::styled(
+
+    let mut spans = Vec::with_capacity(7);
+    if has_board {
+        let board_str = table.board.to_string();
+        let board_display = if board_str.is_empty() {
+            "(pre-flop)".to_string()
+        } else {
+            board_str
+        };
+        spans.push(Span::styled("Board: ", Style::default().fg(Color::Gray)));
+        spans.push(Span::styled(
             board_display,
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("    "),
-        Span::styled("Pot: ", Style::default().fg(Color::Gray)),
-        Span::styled(
-            format!("{pot}"),
-            Style::default()
-                .fg(Color::Green)
-                .add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("    "),
-        Span::styled(
-            format!("phase: {phase}"),
-            Style::default().fg(Color::DarkGray),
-        ),
-    ])]);
-    let p = Paragraph::new(text).block(Block::default().borders(Borders::ALL).title(" Board "));
+        ));
+        spans.push(Span::raw("    "));
+    }
+    spans.push(Span::styled("Pot: ", Style::default().fg(Color::Gray)));
+    spans.push(Span::styled(
+        format!("{pot}"),
+        Style::default()
+            .fg(Color::Green)
+            .add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::raw("    "));
+    spans.push(Span::styled(
+        format!("phase: {phase}"),
+        Style::default().fg(Color::DarkGray),
+    ));
+
+    let p = Paragraph::new(Text::from(vec![Line::from(spans)]))
+        .block(Block::default().borders(Borders::ALL).title(" Board "));
     frame.render_widget(p, area);
 }
 
@@ -296,6 +373,320 @@ fn position_tag(seat: u8, btn: u8, sb: u8, bb: u8) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pkcore::card::Card;
+    use pkcore::casino::table_no_cell::PlayerNoCell;
+
+    fn seat_with(downs: &[Card], ups: &[Card]) -> SeatNoCell {
+        use std::str::FromStr;
+        let mut s = SeatNoCell::new(PlayerNoCell::new_with_chips("X".to_string(), 1_000));
+        // Mirror the dealt cards into the legacy `cards: BoxedCards` storage so
+        // `cards.has_cards()` and the NLHE-hero sorted_display path both work.
+        let joined = downs
+            .iter()
+            .chain(ups.iter())
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join(" ");
+        s.cards = pkcore::arrays::sliced::BoxedCards::from_str(&joined).unwrap();
+        s.hand.extend_down(downs.iter().copied());
+        s.hand.extend_up(ups.iter().copied());
+        s
+    }
+
+    #[test]
+    fn format_hole_nlhe_opponent_is_hidden() {
+        let seat = seat_with(&[Card::ACE_SPADES, Card::KING_SPADES], &[]);
+        assert_eq!(format_hole(&seat, false), "[??]");
+    }
+
+    #[test]
+    fn format_hole_stud_opponent_shows_up_cards_only() {
+        // 5th street: 2 down + 3 up. Each slot is 4 chars wide; "??" sits
+        // at slot cols 2-3 (` ?? `) so it aligns with the card content
+        // inside hero's bracketed down cards. Up cards stay right-aligned
+        // at slot cols 3-4 so they don't shift.
+        let seat = seat_with(
+            &[Card::ACE_SPADES, Card::KING_SPADES],
+            &[Card::QUEEN_HEARTS, Card::JACK_HEARTS, Card::TEN_HEARTS],
+        );
+        assert_eq!(format_hole(&seat, false), " ??   ??    Q♥   J♥   T♥");
+    }
+
+    #[test]
+    fn format_hole_stud_hero_brackets_down_cards() {
+        // Hero sees own down cards (bracketed) plus own up cards (bare).
+        // "[A♠]" already fills the 4-char slot; "Q♥" gets 2 leading spaces
+        // so its card characters line up under the bracketed-card chars.
+        let seat = seat_with(
+            &[Card::ACE_SPADES, Card::KING_SPADES],
+            &[Card::QUEEN_HEARTS],
+        );
+        assert_eq!(format_hole(&seat, true), "[A♠] [K♠]   Q♥");
+    }
+
+    #[test]
+    fn format_hole_stud_opponent_third_street_one_upcard() {
+        let seat = seat_with(
+            &[Card::ACE_SPADES, Card::KING_SPADES],
+            &[Card::QUEEN_HEARTS],
+        );
+        assert_eq!(format_hole(&seat, false), " ??   ??    Q♥");
+    }
+
+    /// End-to-end probe: drive a Stud Hi session through 6th street and
+    /// dump what `format_hole(hero, true)` returns at every `PlayerToAct`
+    /// moment plus right after each `StreetAdvanced`. The user reported that
+    /// on 6th street, hero shows 5 cards while opponents show 6 — this
+    /// test reproduces a real session and asserts every state. If the bug
+    /// is in `format_hole` (not just the data layer), this will catch it.
+    #[test]
+    fn format_hole_hero_renders_six_cards_on_sixth_street_in_real_session() {
+        use pkcore::bot::profile::BotProfile;
+        use pkcore::casino::action::PlayerAction;
+        use pkcore::casino::session::{PokerSession, SessionStep};
+        use pkcore::casino::table_no_cell::{SeatsNoCell, TableNoCell};
+        use rand::SeedableRng;
+        use rand::rngs::SmallRng;
+        use rand::seq::SliceRandom;
+
+        let names = [
+            "You",
+            "abc",
+            "tight_aggressive",
+            "loose_passive",
+            "gto",
+            "short_stack_ninja",
+            "joker",
+            "maniac",
+            "loose_aggressive",
+        ];
+        let seats: Vec<SeatNoCell> = names
+            .iter()
+            .map(|n| SeatNoCell::new(PlayerNoCell::new_with_chips((*n).to_string(), 10_000)))
+            .collect();
+        let table = TableNoCell::stud_hi_from_seats(SeatsNoCell::new(seats), 10, 25, 50, 100);
+        let mut session = PokerSession::new(table);
+        session.start_hand().unwrap();
+
+        let mut rng = SmallRng::seed_from_u64(3_596_220_112_812_468_068);
+        let mut pool = BotProfile::default_profiles();
+        pool.push(BotProfile::joker());
+        pool.shuffle(&mut rng);
+        let bots: Vec<BotProfile> = pool.into_iter().take(8).collect();
+
+        let mut reached_6th = false;
+        for step in 0..1000 {
+            let phase_before = session.table.phase;
+            match session.next_step() {
+                SessionStep::PlayerToAct(seat) => {
+                    let hero_seat = session.table.seats.get_seat(0).unwrap();
+                    let hero_cards = hero_seat.cards.number_of_dealt_cards();
+                    let hero_hand = hero_seat.hand.len();
+                    let hero_format = format_hole(hero_seat, true);
+                    // Count card slots in the rendered output (each slot is 4
+                    // chars wide, joined by single spaces — so length tells us
+                    // slot count for the stud branch).
+                    let slot_count_render = (hero_format.chars().count() + 1) / 5;
+                    eprintln!(
+                        "step {step}: phase={phase_before:?} acting={seat} \
+                         hero.cards={hero_cards} hero.hand={hero_hand} \
+                         render_slots={slot_count_render} '{hero_format}'"
+                    );
+                    if phase_before == pkcore::games::GamePhase::Stud6th {
+                        reached_6th = true;
+                        assert_eq!(
+                            slot_count_render, 6,
+                            "[6th street] hero render shows {slot_count_render} slots, expected 6. \
+                             cards={hero_cards} hand={hero_hand} render='{hero_format}'"
+                        );
+                    }
+                    let action = if seat == 0 {
+                        if session.table.to_call(seat) == 0 {
+                            PlayerAction::Check
+                        } else {
+                            PlayerAction::Call
+                        }
+                    } else {
+                        let bot_idx = (seat as usize) - 1;
+                        bots[bot_idx].decide(&session.table, seat, &mut rng)
+                    };
+                    if session.apply_action(seat, action).is_err() {
+                        let _ = session.apply_action(seat, PlayerAction::Fold);
+                    }
+                }
+                SessionStep::StreetAdvanced => {
+                    let hero_seat = session.table.seats.get_seat(0).unwrap();
+                    let hero_cards = hero_seat.cards.number_of_dealt_cards();
+                    let hero_hand = hero_seat.hand.len();
+                    let hero_format = format_hole(hero_seat, true);
+                    let slot_count_render = (hero_format.chars().count() + 1) / 5;
+                    eprintln!(
+                        "step {step}: StreetAdvanced phase={:?} \
+                         hero.cards={hero_cards} hero.hand={hero_hand} \
+                         render_slots={slot_count_render} '{hero_format}'",
+                        session.table.phase
+                    );
+                    if session.table.phase == pkcore::games::GamePhase::Stud6th {
+                        reached_6th = true;
+                        assert_eq!(
+                            slot_count_render, 6,
+                            "[6th street post-advance] hero render shows {slot_count_render} slots, expected 6. \
+                             cards={hero_cards} hand={hero_hand} render='{hero_format}'"
+                        );
+                    }
+                }
+                SessionStep::HandComplete => break,
+            }
+        }
+        assert!(reached_6th, "never reached 6th street in 1000 steps");
+    }
+
+    /// Render a Stud Hi `PlayState` to a `TestBackend` at 6th street and read
+    /// the hero's row text from the buffer. This catches column-width / panel
+    /// truncation bugs that `format_hole` unit tests wouldn't see.
+    #[test]
+    fn rendered_hero_row_shows_six_cards_on_sixth_street() {
+        use crate::App;
+        use pkcore::bot::profile::BotProfile;
+        use pkcore::casino::action::PlayerAction;
+        use pkcore::casino::session::SessionStep;
+        use pkcore::games::GamePhase;
+        use rand::SeedableRng;
+        use rand::rngs::SmallRng;
+        use rand::seq::SliceRandom;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        // Build the same Play default app, then override its session to Stud Hi.
+        let mut args = crate::cli::PlayArgs::default();
+        args.game.variant = crate::cli::Variant::StudHi;
+        args.game.seed = Some(3_596_220_112_812_468_068);
+        let mut log = crate::log_panel::LogPanel::new();
+        let mut state = crate::modes::PlayState::new(&args, &mut log).unwrap();
+
+        let mut rng = SmallRng::seed_from_u64(3_596_220_112_812_468_068);
+        let mut pool = BotProfile::default_profiles();
+        pool.push(BotProfile::joker());
+        pool.shuffle(&mut rng);
+        let bots: Vec<BotProfile> = pool.into_iter().take(8).collect();
+
+        // Drive until phase reaches Stud6th, then render.
+        for _ in 0..1000 {
+            if state.session.table.phase == GamePhase::Stud6th {
+                break;
+            }
+            match state.session.next_step() {
+                SessionStep::PlayerToAct(seat) => {
+                    let action = if seat == 0 {
+                        if state.session.table.to_call(seat) == 0 {
+                            PlayerAction::Check
+                        } else {
+                            PlayerAction::Call
+                        }
+                    } else {
+                        let bot_idx = (seat as usize) - 1;
+                        bots[bot_idx].decide(&state.session.table, seat, &mut rng)
+                    };
+                    if state.session.apply_action(seat, action).is_err() {
+                        let _ = state.session.apply_action(seat, PlayerAction::Fold);
+                    }
+                }
+                SessionStep::StreetAdvanced => {}
+                SessionStep::HandComplete => panic!("hand ended before 6th street"),
+            }
+        }
+        assert_eq!(state.session.table.phase, GamePhase::Stud6th);
+
+        // Verify data layer: hero has 6 cards.
+        let hero_seat = state.session.table.seats.get_seat(0).unwrap();
+        assert_eq!(hero_seat.cards.number_of_dealt_cards(), 6);
+        assert_eq!(hero_seat.hand.len(), 6);
+        let format_out = format_hole(hero_seat, true);
+        eprintln!("hero format_hole = '{format_out}'");
+
+        let mut app = App::play_default().unwrap();
+        // Swap in our Stud state.
+        app.mode = crate::app::AppMode::Play(Box::new(state));
+
+        // Render at several widths to see where the row gets clipped.
+        for width in [80u16, 100, 120, 140] {
+            let backend = TestBackend::new(width, 36);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|f| crate::ui::view(&app, f)).unwrap();
+            let buffer = terminal.backend().buffer().clone();
+            eprintln!("\n=== terminal width = {width} ===");
+            // Hero row should be the row with "You" in the Name column.
+            for y in 0..15u16 {
+                let line: String = (0..width).map(|x| buffer[(x, y)].symbol()).collect();
+                eprintln!("  y={y:2}: '{line}'");
+            }
+        }
+    }
+
+    #[test]
+    fn format_hole_renders_all_dealt_cards_even_if_hand_is_short() {
+        // Regression: pkcore was observed dealing 6 cards into seat.cards
+        // but only pushing 5 into seat.hand for seat 0, which caused the
+        // hero to show one fewer card than opponents in the table view.
+        // We now iterate seat.cards (always populated by the dealer) and
+        // fall back to stud-position-based visibility for any tail entry
+        // the hand doesn't cover. For a 6-card stud-style row, position 5
+        // (the 6th card) should default to face-up.
+        use std::str::FromStr;
+        let mut s = SeatNoCell::new(PlayerNoCell::new_with_chips("X".to_string(), 1_000));
+        s.cards = pkcore::arrays::sliced::BoxedCards::from_str("5♠ 4♥ 7♥ K♦ 2♠ 9♣").unwrap();
+        // Push only 5 entries into the hand (simulating the observed
+        // pkcore short-hand state): 2 down + 3 up.
+        s.hand.extend_down([Card::FIVE_SPADES, Card::FOUR_HEARTS]);
+        s.hand
+            .extend_up([Card::SEVEN_HEARTS, Card::KING_DIAMONDS, Card::DEUCE_SPADES]);
+        let out = format_hole(&s, true);
+        // All 6 cards should appear, with the 6th treated as face-up.
+        assert!(out.contains("[5♠]"));
+        assert!(out.contains("[4♥]"));
+        assert!(out.contains("7♥"));
+        assert!(out.contains("K♦"));
+        assert!(out.contains("2♠"));
+        assert!(out.contains("9♣"));
+        // 6 slots × 4 chars + 5 separator spaces = 29 chars.
+        assert_eq!(out.chars().count(), 29);
+    }
+
+    #[test]
+    fn format_hole_question_marks_align_with_bracketed_card_content() {
+        // Hero's slot 1 = `[A♠]` — card chars `A` and `♠` sit at slot
+        // cols 2 and 3 (inside the brackets). Opponent's `??` placeholder
+        // should sit at the same slot cols so the `?`s line up vertically
+        // with the `A♠` chars. Each row needs at least one up card so
+        // both take the stud-style branch (otherwise opp falls into the
+        // NLHE-style `[??]` shortcut).
+        let hero = seat_with(&[Card::ACE_SPADES], &[Card::DEUCE_CLUBS]);
+        let opp = seat_with(&[Card::ACE_DIAMONDS], &[Card::DEUCE_CLUBS]);
+        let h_chars: Vec<char> = format_hole(&hero, true).chars().collect();
+        let o_chars: Vec<char> = format_hole(&opp, false).chars().collect();
+        assert_eq!(&h_chars[0..4], &['[', 'A', '♠', ']']);
+        assert_eq!(&o_chars[0..4], &[' ', '?', '?', ' ']);
+    }
+
+    #[test]
+    fn format_hole_stud_hero_and_opponent_align_per_slot() {
+        // Both rows should have card slots that start at the same column
+        // indices: slot N begins at char index 5*(N-1).
+        let hero = seat_with(
+            &[Card::ACE_SPADES, Card::KING_SPADES],
+            &[Card::QUEEN_HEARTS],
+        );
+        let opp = seat_with(&[Card::DEUCE_CLUBS, Card::TREY_CLUBS], &[Card::JACK_HEARTS]);
+        let h = format_hole(&hero, true);
+        let o = format_hole(&opp, false);
+        // Both should be the same total length (3 cards × 4 chars + 2 spaces).
+        assert_eq!(h.chars().count(), o.chars().count());
+        // Third-card slot (chars 11..15) is the only up card on either row.
+        let hero_slot3: String = h.chars().skip(10).take(4).collect();
+        let opp_slot3: String = o.chars().skip(10).take(4).collect();
+        assert_eq!(hero_slot3, "  Q♥");
+        assert_eq!(opp_slot3, "  J♥");
+    }
 
     #[test]
     fn position_tag_btn() {

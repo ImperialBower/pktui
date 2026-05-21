@@ -18,7 +18,7 @@ use pkcore::casino::table_no_cell::{PlayerNoCell, SeatNoCell, SeatsNoCell, Table
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 
-use crate::cli::PlayArgs;
+use crate::cli::{PlayArgs, Variant};
 use crate::error::Result;
 use crate::log_panel::{LogPanel, Severity};
 use crate::modes::seeded_rng;
@@ -186,7 +186,13 @@ pub const HERO_NAME: &str = "You";
 ///
 /// ```
 /// use pktui::modes::play::ShowdownSeat;
-/// let s = ShowdownSeat { seat: 1, name: "gto".into(), hole: "Ah Kh".into(), hand_class: Some("Two Pair".into()) };
+/// let s = ShowdownSeat {
+///     seat: 1,
+///     name: "gto".into(),
+///     hole: "Ah Kh".into(),
+///     best_hand: Some("A♥ K♥ Q♠ J♣ T♦".into()),
+///     hand_class: Some("AceHighStraight".into()),
+/// };
 /// assert_eq!(s.seat, 1);
 /// ```
 #[derive(Debug, Clone)]
@@ -197,8 +203,12 @@ pub struct ShowdownSeat {
     pub name: String,
     /// Hole cards as a display string, e.g. `"Ah Kh"`.
     pub hole: String,
-    /// Best 5-card hand class (e.g. `"Pair of Kings"`), if a full 5-card
-    /// board was available to evaluate against.
+    /// Best 5-card hand picked from the 7 available cards (hole + board for
+    /// Hold'em, 7 hole for stud-family), sorted by the evaluator. Only `Some`
+    /// once enough cards are visible to evaluate (river for Hold'em, 7th
+    /// street for stud-family).
+    pub best_hand: Option<String>,
+    /// Best 5-card hand class label (e.g. `"OnePair"`, `"Lowball"`).
     pub hand_class: Option<String>,
 }
 
@@ -226,6 +236,67 @@ pub struct PlayState {
     pub last_showdown: Option<Vec<ShowdownSeat>>,
 }
 
+/// Dispatches table construction to the variant-specific pkcore constructor.
+///
+/// NLHE uses blinds; Stud Hi uses ante + bring-in + small-bet/big-bet. When
+/// `--small-bet`/`--big-bet` aren't supplied for Stud, they fall back to
+/// `--small-blind`/`--big-blind` so the existing CLI defaults still produce
+/// a playable table.
+fn build_table(args: &PlayArgs, seats: SeatsNoCell) -> TableNoCell {
+    match args.game.variant {
+        Variant::Nlhe => TableNoCell::nlh_from_seats(
+            seats,
+            ForcedBets::new(args.game.small_blind, args.game.big_blind),
+        ),
+        Variant::Plo => {
+            TableNoCell::plo_from_seats(seats, (args.game.small_blind, args.game.big_blind))
+        }
+        Variant::StudHi => TableNoCell::stud_hi_from_seats(
+            seats,
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+        ),
+        Variant::Razz => TableNoCell::razz_from_seats(
+            seats,
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+        ),
+    }
+}
+
+fn start_log_line(args: &PlayArgs, seed: u64) -> String {
+    match args.game.variant {
+        Variant::Nlhe => format!(
+            "Play started: NLHE blinds {}/{} starting {} chips, seed={seed}",
+            args.game.small_blind, args.game.big_blind, args.game.chips
+        ),
+        Variant::Plo => format!(
+            "Play started: PLO blinds {}/{} starting {} chips, seed={seed}",
+            args.game.small_blind, args.game.big_blind, args.game.chips
+        ),
+        Variant::StudHi => format!(
+            "Play started: Stud Hi ante {} / bring-in {} / bets {}-{} starting {} chips, seed={seed}",
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+            args.game.chips,
+        ),
+        Variant::Razz => format!(
+            "Play started: Razz ante {} / bring-in {} / bets {}-{} starting {} chips, seed={seed}",
+            args.game.ante.unwrap_or(10),
+            args.game.bring_in.unwrap_or(25),
+            args.game.small_bet.unwrap_or(args.game.small_blind),
+            args.game.big_bet.unwrap_or(args.game.big_blind),
+            args.game.chips,
+        ),
+    }
+}
+
 impl PlayState {
     /// Initialises a Play session: builds nine seats (hero + 8 random bots),
     /// posts blinds, deals the first hand, and primes the engine.
@@ -249,11 +320,14 @@ impl PlayState {
     pub fn new(args: &PlayArgs, log: &mut LogPanel) -> Result<Self> {
         let (mut rng, seed) = seeded_rng(args.game.seed);
 
-        // Pick 8 bots out of the default pool + joker (matches pkarena0-web).
+        // Pick bots out of the default pool + joker (matches pkarena0-web).
+        // Stud-family games cap at 8 seats total (52-card deck constraint),
+        // so we only seat `max_seats - 1` bots for those variants.
+        let bot_count = args.game.variant.max_seats().saturating_sub(1);
         let mut pool = BotProfile::default_profiles();
         pool.push(BotProfile::joker());
         pool.shuffle(&mut rng);
-        let bots: Vec<BotProfile> = pool.into_iter().take(8).collect();
+        let bots: Vec<BotProfile> = pool.into_iter().take(bot_count).collect();
 
         let mut seats = vec![SeatNoCell::new(PlayerNoCell::new_with_chips(
             HERO_NAME.to_string(),
@@ -266,21 +340,20 @@ impl PlayState {
             )));
         }
 
-        let table = TableNoCell::nlh_from_seats(
-            SeatsNoCell::new(seats),
-            ForcedBets::new(args.game.small_blind, args.game.big_blind),
-        );
+        let table = build_table(args, SeatsNoCell::new(seats));
 
         let mut session = PokerSession::new(table);
         session.start_hand()?;
 
-        log.push(
-            Severity::Info,
-            format!(
-                "Play started: blinds {}/{} starting {} chips, seed={seed}",
-                args.game.small_blind, args.game.big_blind, args.game.chips
-            ),
-        );
+        log.push(Severity::Info, start_log_line(args, seed));
+        if args.game.variant != Variant::Nlhe {
+            log.push(
+                Severity::Info,
+                "Note: UI rendering for non-NLHE variants is preliminary — \
+                 board/street labels assume Hold'em."
+                    .to_string(),
+            );
+        }
         log.push(Severity::Info, "Hand 1 dealt".to_string());
 
         Ok(Self {
@@ -400,9 +473,10 @@ impl PlayState {
                 let showdown = capture_showdown(&self.session.table, n, |s| self.seat_name(s));
                 if let Some(rows) = &showdown {
                     for row in rows {
-                        let suffix = match &row.hand_class {
-                            Some(c) => format!(" — {c}"),
-                            None => String::new(),
+                        let suffix = match (&row.best_hand, &row.hand_class) {
+                            (Some(best), Some(class)) => format!(" — best [{best}] {class}"),
+                            (None, Some(class)) => format!(" — {class}"),
+                            _ => String::new(),
                         };
                         log.push(
                             Severity::Info,
@@ -446,6 +520,96 @@ impl PlayState {
                 Ok(true)
             }
         }
+    }
+
+    /// Writes a YAML snapshot of the current session state to the working
+    /// directory. Filename: `pktui-dump-<seed>-<phase>-<unix_secs>.yaml`.
+    /// Returns the path written, or an error if I/O fails.
+    ///
+    /// The dump captures table state, every seat's cards + per-card
+    /// visibility, recent log lines, and `awaiting` — enough for a developer
+    /// to reproduce a stuck-state bug from a single file.
+    ///
+    /// # Errors
+    ///
+    /// Returns `std::io::Error` if the file cannot be created or written.
+    pub fn dump_state(&self, log: &LogPanel) -> std::io::Result<std::path::PathBuf> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let phase = format!("{:?}", self.session.table.phase);
+        let name = format!("pktui-dump-{}-{}-{unix}.yaml", self.seed, phase);
+        let path = std::path::PathBuf::from(&name);
+        let yaml = self.render_state_yaml(log);
+        std::fs::write(&path, yaml)?;
+        Ok(path)
+    }
+
+    fn render_state_yaml(&self, log: &LogPanel) -> String {
+        use std::fmt::Write;
+        let t = &self.session.table;
+        let mut s = String::with_capacity(4096);
+        let _ = writeln!(s, "pktui_dump:");
+        let _ = writeln!(s, "  seed: {}", self.seed);
+        let _ = writeln!(s, "  hand_number: {}", self.session.hand_number);
+        let _ = writeln!(s, "  phase: {:?}", t.phase);
+        let _ = writeln!(s, "  pot: {}", t.pot);
+        let _ = writeln!(s, "  bet: {}", t.bet);
+        let _ = writeln!(s, "  button: {}", t.button);
+        let _ = writeln!(s, "  raises_this_street: {}", t.raises_this_street);
+        let _ = writeln!(s, "  awaiting: {:?}", self.awaiting);
+        let _ = writeln!(s, "  forced:");
+        let _ = writeln!(s, "    small_blind: {}", t.forced.small_blind);
+        let _ = writeln!(s, "    big_blind: {}", t.forced.big_blind);
+        let _ = writeln!(s, "    ante: {}", t.forced.ante);
+        let _ = writeln!(s, "    bring_in: {}", t.forced.bring_in);
+        let _ = writeln!(s, "  betting: {:?}", t.betting);
+        let _ = writeln!(s, "  board: \"{}\"", t.board);
+        let _ = writeln!(s, "  seats:");
+        for (i, seat) in t.seats.0.iter().enumerate() {
+            if seat.is_empty() {
+                continue;
+            }
+            let seat_idx = u8::try_from(i).unwrap_or(u8::MAX);
+            let cards_str = seat
+                .cards
+                .as_slice()
+                .iter()
+                .filter(|c| **c != pkcore::card::Card::BLANK)
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(" ");
+            let _ = writeln!(s, "    - seat: {i}");
+            let _ = writeln!(s, "      name: \"{}\"", self.seat_name(seat_idx));
+            let _ = writeln!(s, "      chips: {}", seat.player.chips);
+            let _ = writeln!(s, "      bet: {}", seat.player.bet);
+            let _ = writeln!(s, "      in_hand: {}", seat.is_in_hand());
+            let _ = writeln!(
+                s,
+                "      cards_dealt: {}",
+                seat.cards.number_of_dealt_cards()
+            );
+            let _ = writeln!(s, "      cards: \"{cards_str}\"");
+            let _ = writeln!(s, "      hand_len: {}", seat.hand.len());
+            let _ = writeln!(s, "      hand:");
+            for hc in seat.hand.iter() {
+                let vis = if hc.is_up() { "Up" } else { "Down" };
+                let _ = writeln!(
+                    s,
+                    "        - {{ card: \"{}\", visibility: {vis} }}",
+                    hc.card()
+                );
+            }
+        }
+        let _ = writeln!(s, "  recent_log:");
+        let lines: Vec<&str> = log.iter().map(|l| l.text.as_str()).collect();
+        let start = lines.len().saturating_sub(40);
+        for line in &lines[start..] {
+            let escaped = line.replace('"', "\\\"");
+            let _ = writeln!(s, "    - \"{escaped}\"");
+        }
+        s
     }
 
     /// Starts the next hand after [`Awaiting::HandComplete`].
@@ -579,6 +743,7 @@ pub fn capture_showdown<F: Fn(u8) -> String>(
                 seat: i,
                 name: name_of(i),
                 hole,
+                best_hand: None,
                 hand_class: None,
             })
         })
@@ -588,27 +753,79 @@ pub fn capture_showdown<F: Fn(u8) -> String>(
         return None;
     }
 
+    let family = table.game.family();
     let board = table.board.to_string();
-    if board.split_whitespace().count() == 5 {
-        for row in &mut active {
-            row.hand_class = hand_class(&row.hole, &board);
+    let board_count = board.split_whitespace().count();
+    for row in &mut active {
+        if let Some((best, class)) = evaluate_hand(family, &row.hole, &board, board_count) {
+            row.best_hand = Some(best);
+            row.hand_class = Some(class);
         }
     }
 
     Some(active)
 }
 
-fn hand_class(hole: &str, board: &str) -> Option<String> {
-    let seven = Seven::from_str(&format!("{hole} {board}")).ok()?;
-    let (hand_rank, hand) = seven.hand_rank_and_hand();
-    let eval = Eval::new(hand_rank, hand);
-    Some(format!("{:?}", eval.hand_rank.class))
+/// Evaluates a player's best 5-card hand for the given game family.
+///
+/// Returns `(best_hand_display, hand_class_label)` when there are enough
+/// cards to evaluate (river for Hold'em, 7th street for stud-family);
+/// otherwise `None`. Razz uses the A-5 lowball evaluator; everything else
+/// uses the standard high-hand evaluator.
+fn evaluate_hand(
+    family: pkcore::games::GameFamily,
+    hole: &str,
+    board: &str,
+    board_count: usize,
+) -> Option<(String, String)> {
+    use pkcore::arrays::four::Four;
+    use pkcore::games::GameFamily;
+    use pkcore::games::omaha::OmahaHigh;
+    use pkcore::play::board::Board;
+
+    let scored = match family {
+        GameFamily::Holdem => {
+            if board_count != 5 {
+                return None;
+            }
+            let seven = Seven::from_str(&format!("{hole} {board}")).ok()?;
+            let (hand_rank, hand) = seven.hand_rank_and_hand();
+            Eval::new(hand_rank, hand)
+        }
+        GameFamily::Omaha => {
+            if board_count != 5 || hole.split_whitespace().count() != 4 {
+                return None;
+            }
+            let four = Four::from_str(hole).ok()?;
+            let board_obj = Board::from_str(board).ok()?;
+            OmahaHigh { hand: four }.eval(&board_obj)
+        }
+        GameFamily::StudHi => {
+            if hole.split_whitespace().count() != 7 {
+                return None;
+            }
+            let seven = Seven::from_str(hole).ok()?;
+            let (hand_rank, hand) = seven.hand_rank_and_hand();
+            Eval::new(hand_rank, hand)
+        }
+        GameFamily::Razz => {
+            if hole.split_whitespace().count() != 7 {
+                return None;
+            }
+            let seven = Seven::from_str(hole).ok()?;
+            Eval::from_seven_razz(&seven).ok()?
+        }
+    };
+    Some((
+        scored.hand.to_string(),
+        format!("{:?}", scored.hand_rank.class),
+    ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cli::PlayArgs;
+    use crate::cli::{PlayArgs, Variant};
 
     fn play_with_seed(seed: u64) -> PlayState {
         let mut log = LogPanel::new();
@@ -622,6 +839,24 @@ mod tests {
         let s = play_with_seed(1);
         assert_eq!(s.bots.len(), 8);
         assert_eq!(s.session.table.seats.0.len(), 9);
+    }
+
+    #[test]
+    fn new_stud_hi_seats_six_players_and_logs_warning() {
+        let mut log = LogPanel::new();
+        let mut args = PlayArgs::default();
+        args.game.seed = Some(7);
+        args.game.variant = Variant::StudHi;
+        let s = PlayState::new(&args, &mut log).unwrap();
+        assert_eq!(s.bots.len(), 5);
+        assert_eq!(s.session.table.seats.0.len(), 6);
+        let logged: String = log
+            .iter()
+            .map(|line| line.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(logged.contains("Stud Hi"), "log was: {logged}");
+        assert!(logged.contains("preliminary"), "log was: {logged}");
     }
 
     #[test]
