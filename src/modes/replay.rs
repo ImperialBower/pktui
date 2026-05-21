@@ -132,7 +132,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "uses real filesystem; Miri has no useful semantics for fs syscalls")]
+    #[cfg_attr(
+        miri,
+        ignore = "uses real filesystem; Miri has no useful semantics for fs syscalls"
+    )]
     fn loads_empty_collection() {
         let f = write_minimal_yaml();
         let mut log = LogPanel::new();
@@ -141,7 +144,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "uses real filesystem; Miri has no useful semantics for fs syscalls")]
+    #[cfg_attr(
+        miri,
+        ignore = "uses real filesystem; Miri has no useful semantics for fs syscalls"
+    )]
     fn missing_file_yields_io_error() {
         let mut log = LogPanel::new();
         match ReplayState::from_file(
@@ -154,7 +160,10 @@ mod tests {
     }
 
     #[test]
-    #[cfg_attr(miri, ignore = "uses real filesystem; Miri has no useful semantics for fs syscalls")]
+    #[cfg_attr(
+        miri,
+        ignore = "uses real filesystem; Miri has no useful semantics for fs syscalls"
+    )]
     fn malformed_yaml_yields_yaml_error() {
         let mut f = NamedTempFile::new().unwrap();
         f.write_all(b"not: valid: yaml: at: all: : :").unwrap();
