@@ -112,7 +112,7 @@ fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
             let folded = s.state == PlayerState::Folded as i32
                 || s.state == PlayerState::Out as i32;
             let active = status.hand_in_progress && s.seat_number == status.next_to_act;
-            let accent = if active { Accent::Active } else { Accent::None };
+            let accent = if active && !folded { Accent::Active } else { Accent::None };
             SeatRow {
                 seat: u8::try_from(s.seat_number).unwrap_or(u8::MAX),
                 name: s.player_name.clone(),
@@ -140,7 +140,7 @@ fn render_board_str(board: &str, pot: u32, street: i32, frame: &mut Frame, area:
         _ => "—",
     };
     let board_display = if board.is_empty() {
-        "(pre-flop)".to_string()
+        "—".to_string()
     } else {
         board.to_string()
     };
@@ -919,5 +919,31 @@ mod tests {
         terminal
             .draw(|f| render_table_view_spectate(&state, f, f.area()))
             .unwrap();
+    }
+
+    #[test]
+    fn status_to_rows_folded_next_to_act_is_not_active() {
+        use pkdealer_proto::dealer::{SeatInfo, TableStatus};
+        let status = TableStatus {
+            seats: vec![SeatInfo {
+                seat_number: 0,
+                player_name: "gto".into(),
+                chips: 1_000,
+                cards: "??".into(),
+                state: 8, // FOLDED
+                withdrawn: 10_000,
+                chips_in_play: 0,
+                profit_loss: -9_000,
+            }],
+            board: String::new(),
+            pot: 0,
+            next_to_act: 0,          // points at the folded seat
+            hand_in_progress: true,
+            game_over: false,
+            current_street: 1,
+        };
+        let rows = status_to_rows(&status);
+        assert!(rows[0].folded);
+        assert_eq!(rows[0].accent, Accent::None);
     }
 }
