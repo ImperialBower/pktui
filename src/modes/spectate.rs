@@ -19,6 +19,23 @@ use crate::log_panel::{LogPanel, Severity};
 /// Default dealer endpoint, matching the gRPC port exposed by the demo stack.
 pub const DEFAULT_ENDPOINT: &str = "http://localhost:50051";
 
+/// Default spectator token, matching the dealer's `DEFAULT_SPECTATOR_TOKEN`.
+/// Sent as the stream's `player_token` so the dealer reveals every seat's
+/// hole cards (full-table visibility), as opposed to an empty token which
+/// redacts them.
+const DEFAULT_SPECTATOR_TOKEN: &str = "spectator";
+
+/// Environment variable overriding [`DEFAULT_SPECTATOR_TOKEN`]; named to match
+/// the dealer's own `PKDEALER_SPECTATOR_TOKEN`, so a custom token only has to
+/// be set once and both sides agree.
+const SPECTATOR_TOKEN_ENV: &str = "PKDEALER_SPECTATOR_TOKEN";
+
+/// Resolves the spectator token from the environment, falling back to the
+/// default the dealer also ships with.
+fn spectator_token() -> String {
+    std::env::var(SPECTATOR_TOKEN_ENV).unwrap_or_else(|_| DEFAULT_SPECTATOR_TOKEN.to_string())
+}
+
 /// Connection lifecycle of the background gRPC stream.
 ///
 /// # Examples
@@ -243,7 +260,7 @@ async fn connect_and_stream(
 
     let mut stream = client
         .stream_events(StreamEventsRequest {
-            player_token: String::new(),
+            player_token: spectator_token(),
         })
         .await
         .map_err(|_| ())?

@@ -113,11 +113,19 @@ fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
                 || s.state == PlayerState::Out as i32;
             let active = status.hand_in_progress && s.seat_number == status.next_to_act;
             let accent = if active && !folded { Accent::Active } else { Accent::None };
+            // The spectator stream reveals every seat's cards; show them only
+            // for players still contesting the hand. A folded/out seat's hand
+            // is mucked, so keep it hidden as `??`.
+            let hole = if folded {
+                "??".to_string()
+            } else {
+                s.cards.clone()
+            };
             SeatRow {
                 seat: u8::try_from(s.seat_number).unwrap_or(u8::MAX),
                 name: s.player_name.clone(),
                 chips: s.chips as usize,
-                hole: s.cards.clone(),
+                hole,
                 bet: s.chips_in_play as usize,
                 // Position tags require the button seat, which TableStatus does
                 // not expose; left blank in v1 (documented gap).
@@ -885,6 +893,46 @@ mod tests {
         assert!(!rows[0].folded);
         assert!(rows[1].folded); // FOLDED state
         assert_eq!(rows[1].accent, Accent::None);
+    }
+
+    #[test]
+    fn status_to_rows_reveals_active_cards_and_hides_folded() {
+        use pkdealer_proto::dealer::{SeatInfo, TableStatus};
+
+        let status = TableStatus {
+            seats: vec![
+                SeatInfo {
+                    seat_number: 0,
+                    player_name: "gto".into(),
+                    chips: 9_500,
+                    cards: "Ah Kd".into(),
+                    state: 4, // CALLED — still in the hand
+                    withdrawn: 10_000,
+                    chips_in_play: 500,
+                    profit_loss: -500,
+                },
+                SeatInfo {
+                    seat_number: 1,
+                    player_name: "lag".into(),
+                    chips: 0,
+                    cards: "7c 2d".into(),
+                    state: 8, // FOLDED — mucked
+                    withdrawn: 10_000,
+                    chips_in_play: 0,
+                    profit_loss: -10_000,
+                },
+            ],
+            board: "Qc Jc Tc".into(),
+            pot: 1_000,
+            next_to_act: 0,
+            hand_in_progress: true,
+            game_over: false,
+            current_street: 2,
+        };
+
+        let rows = status_to_rows(&status);
+        assert_eq!(rows[0].hole, "Ah Kd"); // active player → cards revealed
+        assert_eq!(rows[1].hole, "??"); // folded player → hidden
     }
 
     #[test]
