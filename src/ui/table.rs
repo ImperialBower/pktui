@@ -126,14 +126,17 @@ fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
                 name: s.player_name.clone(),
                 chips: s.chips as usize,
                 hole,
-                bet: s.chips_in_play as usize,
+                // Per-street bet (resets when the street advances), not the
+                // hand-cumulative `chips_in_play`, so the column clears between
+                // betting rounds.
+                bet: s.bet as usize,
                 // Position tags require the button seat, which TableStatus does
                 // not expose; left blank in v1 (documented gap).
                 tag: String::new(),
                 folded,
                 accent,
                 pnl: Some(s.profit_loss),
-                action: last_action_label(s.state, s.chips_in_play),
+                action: last_action_label(s.state, s.bet),
             }
         })
         .collect()
@@ -384,16 +387,26 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
             .fg(Color::Yellow),
     );
 
+    // Size the Hole column to its widest cell rather than stretching it, so the
+    // Action column sits right beside the cards instead of after a wide,
+    // mostly-empty gap. Spectate hands are short ("Ah Kd" / "??"); Play and
+    // showdown strings (7-card Stud ≈ 34, reveal ≈ 60) are longer, so cap at 64
+    // to keep a long reveal from crowding out the trailing columns.
+    let hole_width = rows
+        .iter()
+        .map(|r| r.hole.chars().count())
+        .max()
+        .unwrap_or(0)
+        .max("Hole".len())
+        .min(64);
+    let hole_width = u16::try_from(hole_width).unwrap_or(64);
+
     let widths = [
         Constraint::Length(3),
         Constraint::Length(22),
         Constraint::Length(10),
         Constraint::Length(8),
-        // Wide enough to hold either a 7-card Stud hand (e.g.
-        // "[A♠] [K♠] Q♥ J♥ T♥ 9♥ [4♣]" ≈ 34 chars) or a showdown reveal
-        // string (7 hole + " [best5] LongClassName" ≈ 60 chars). Stretches
-        // to fill spare width via `Constraint::Min`.
-        Constraint::Min(60),
+        Constraint::Length(hole_width),
         // Action — holds the longest label, e.g. "all-in 10000".
         Constraint::Length(13),
         Constraint::Length(8),
@@ -895,6 +908,7 @@ mod tests {
                     withdrawn: 10_000,
                     chips_in_play: 500,
                     profit_loss: -500,
+                    bet: 500,
                 },
                 SeatInfo {
                     seat_number: 1,
@@ -905,6 +919,7 @@ mod tests {
                     withdrawn: 10_000,
                     chips_in_play: 0,
                     profit_loss: -10_000,
+                    bet: 0,
                 },
             ],
             board: "Ah Kd Qc".into(),
@@ -942,6 +957,7 @@ mod tests {
                     withdrawn: 10_000,
                     chips_in_play: 500,
                     profit_loss: -500,
+                    bet: 500,
                 },
                 SeatInfo {
                     seat_number: 1,
@@ -952,6 +968,7 @@ mod tests {
                     withdrawn: 10_000,
                     chips_in_play: 0,
                     profit_loss: -10_000,
+                    bet: 0,
                 },
             ],
             board: "Qc Jc Tc".into(),
@@ -1001,6 +1018,7 @@ mod tests {
                 withdrawn: 10_000,
                 chips_in_play: 500,
                 profit_loss: -500,
+                bet: 500,
             }],
             board: "Ah Kd Qc".into(),
             pot: 1_000,
@@ -1030,6 +1048,7 @@ mod tests {
                 withdrawn: 10_000,
                 chips_in_play: 0,
                 profit_loss: -9_000,
+                bet: 0,
             }],
             board: String::new(),
             pot: 0,
