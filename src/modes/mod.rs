@@ -1,11 +1,12 @@
 //! Per-mode state and initialisation.
 //!
-//! pktui runs in one of three modes, selected at startup via the CLI
+//! pktui runs in one of four modes, selected at startup via the CLI
 //! subcommand:
 //!
 //! * [`play`] — one human vs eight bots.
 //! * [`arena`] — nine bots, watch-only.
 //! * [`replay`] — read a saved YAML hand collection street-by-street.
+//! * [`spectate`] — read-only viewer of a live `pkdealer` table over gRPC.
 //!
 //! Each submodule owns the mode-specific state. The top-level
 //! [`AppMode`](crate::app::AppMode) enum then dispatches to the right one.
@@ -13,10 +14,12 @@
 pub mod arena;
 pub mod play;
 pub mod replay;
+pub mod spectate;
 
 pub use arena::ArenaState;
 pub use play::{Awaiting, BetField, PlayState};
 pub use replay::ReplayState;
+pub use spectate::{ConnState, SpectateMsg, SpectateState};
 
 use rand::Rng;
 use rand::SeedableRng;
