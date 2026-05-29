@@ -21,6 +21,7 @@ use ratatui::widgets::{Block, Borders, Paragraph};
 use crate::app::{App, AppMode};
 use crate::modes::Awaiting;
 use crate::modes::PlayState;
+use crate::modes::SpectateState;
 use crate::modes::play::HERO_SEAT;
 
 /// Renders the action-bar widget.
@@ -213,6 +214,27 @@ fn replay_hints() -> Line<'static> {
     ])
 }
 
+/// One-line status / help bar for the read-only spectator.
+fn spectate_hints(state: &SpectateState) -> Line<'static> {
+    let pause = if state.paused { "paused" } else { "live" };
+    Line::from(vec![
+        Span::styled(
+            "Spectate",
+            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("   "),
+        Span::styled(
+            format!("{}  [{}]", state.conn.label(), pause),
+            Style::default().fg(Color::Gray),
+        ),
+        Span::raw("   "),
+        keystyle(" space "),
+        Span::raw(" pause   "),
+        keystyle(" q "),
+        Span::raw(" quit"),
+    ])
+}
+
 fn keystyle(key: &str) -> Span<'static> {
     Span::styled(
         key.to_string(),
@@ -268,5 +290,15 @@ mod tests {
             assert!(min <= half);
             assert!(half <= full);
         }
+    }
+
+    #[test]
+    fn spectate_hints_contains_connection_and_quit() {
+        use crate::modes::SpectateState;
+        let (state, _tx) = SpectateState::detached("http://localhost:50051");
+        let line = spectate_hints(&state);
+        let joined: String = line.spans.iter().map(|s| s.content.as_ref()).collect();
+        assert!(joined.contains("connecting"));
+        assert!(joined.contains("quit"));
     }
 }
