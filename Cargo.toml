@@ -17,6 +17,9 @@ serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 dirs = "6"
 pkcore = { version = "0.1.1", features = ["bot-profiles", "hand-histories"] }
+tokio = { version = "1", features = ["rt", "time"] }
+tonic = { version = "0.12", features = ["transport"] }
+pkdealer_proto = { path = "../pkdealer/crates/pkdealer_proto" }
 
 [dev-dependencies]
 tempfile = "3"
