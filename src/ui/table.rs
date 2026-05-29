@@ -133,9 +133,28 @@ fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
                 folded,
                 accent,
                 pnl: Some(s.profit_loss),
+                action: last_action_label(s.state, s.chips_in_play),
             }
         })
         .collect()
+}
+
+/// Human-readable last action for a spectated seat, derived from its proto
+/// `state` and the chips committed this street (`chips_in_play`).
+///
+/// Returns an empty string when the seat has not acted yet, is idle between
+/// hands, or is eliminated — those carry no action to show.
+fn last_action_label(state: i32, chips_in_play: u32) -> String {
+    match PlayerState::try_from(state) {
+        Ok(PlayerState::Folded) => "fold".to_string(),
+        Ok(PlayerState::Checked) => "check".to_string(),
+        Ok(PlayerState::Called) => format!("call {chips_in_play}"),
+        Ok(PlayerState::Bet) => format!("bet {chips_in_play}"),
+        Ok(PlayerState::Raised) => format!("raise {chips_in_play}"),
+        Ok(PlayerState::AllIn) => format!("all-in {chips_in_play}"),
+        Ok(PlayerState::Blind) => format!("blind {chips_in_play}"),
+        _ => String::new(),
+    }
 }
 
 /// Board renderer driven by the proto's pre-formatted board string + pot.
@@ -202,6 +221,10 @@ struct SeatRow {
     /// Signed profit/loss for the seat. `None` when the mode does not track
     /// it (Play / Arena); `Some(_)` in Spectate mode from the dealer.
     pnl: Option<i32>,
+    /// The seat's most recent action this street (e.g. `"fold"`, `"bet 100"`).
+    /// Empty when the mode does not surface it (Play / Arena) or the seat has
+    /// not yet acted; populated in Spectate mode from the dealer snapshot.
+    action: String,
 }
 
 fn seat_rows<F: Fn(u8) -> String>(
@@ -268,6 +291,7 @@ fn seat_rows<F: Fn(u8) -> String>(
             folded,
             accent,
             pnl: None,
+            action: String::new(),
         });
     }
     out
@@ -350,6 +374,7 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         Cell::from("Chips"),
         Cell::from("Bet"),
         Cell::from("Hole"),
+        Cell::from("Action"),
         Cell::from("Pos"),
         Cell::from("P/L"),
     ])
@@ -369,6 +394,8 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         // string (7 hole + " [best5] LongClassName" ≈ 60 chars). Stretches
         // to fill spare width via `Constraint::Min`.
         Constraint::Min(60),
+        // Action — holds the longest label, e.g. "all-in 10000".
+        Constraint::Length(13),
         Constraint::Length(8),
         Constraint::Length(10),
     ];
@@ -420,6 +447,7 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
                 Cell::from(format!("{}", r.chips)),
                 Cell::from(badge),
                 hole_cell,
+                Cell::from(r.action.clone()),
                 Cell::from(r.tag.clone()),
                 pnl_cell,
             ])
@@ -837,6 +865,7 @@ mod tests {
             folded: false,
             accent: Accent::None,
             pnl: Some(-500),
+            action: "bet 500".to_string(),
         }];
         let backend = TestBackend::new(120, 12);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -846,6 +875,9 @@ mod tests {
         let buffer = terminal.backend().buffer().clone();
         let header: String = (0..120).map(|x| buffer[(x, 1)].symbol()).collect();
         assert!(header.contains("P/L"));
+        assert!(header.contains("Action"));
+        let body: String = (0..120).map(|x| buffer[(x, 2)].symbol()).collect();
+        assert!(body.contains("bet 500"));
     }
 
     #[test]
@@ -933,6 +965,22 @@ mod tests {
         let rows = status_to_rows(&status);
         assert_eq!(rows[0].hole, "Ah Kd"); // active player → cards revealed
         assert_eq!(rows[1].hole, "??"); // folded player → hidden
+        assert_eq!(rows[0].action, "call 500"); // CALLED with 500 in play
+        assert_eq!(rows[1].action, "fold"); // FOLDED
+    }
+
+    #[test]
+    fn last_action_label_maps_states() {
+        use pkdealer_proto::dealer::PlayerState;
+        assert_eq!(last_action_label(PlayerState::Folded as i32, 0), "fold");
+        assert_eq!(last_action_label(PlayerState::Checked as i32, 0), "check");
+        assert_eq!(last_action_label(PlayerState::Bet as i32, 100), "bet 100");
+        assert_eq!(last_action_label(PlayerState::Raised as i32, 300), "raise 300");
+        assert_eq!(last_action_label(PlayerState::Called as i32, 100), "call 100");
+        assert_eq!(last_action_label(PlayerState::AllIn as i32, 9_500), "all-in 9500");
+        // Not-yet-acted / idle states carry no label.
+        assert_eq!(last_action_label(PlayerState::YetToAct as i32, 0), "");
+        assert_eq!(last_action_label(PlayerState::Ready as i32, 0), "");
     }
 
     #[test]
