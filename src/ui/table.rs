@@ -25,6 +25,8 @@ use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table as TableWidge
 
 use crate::modes::play::{HERO_SEAT, ShowdownSeat};
 use crate::modes::{ArenaState, Awaiting, PlayState};
+use crate::modes::SpectateState;
+use pkdealer_proto::dealer::{PlayerState, Street, TableStatus};
 
 /// Renders the table view for Play mode.
 ///
@@ -76,6 +78,95 @@ pub fn render_table_view_arena(state: &ArenaState, frame: &mut Frame, area: Rect
     render_board(&state.session.table, frame, chunks[1]);
 }
 
+/// Renders the read-only spectator table from the latest dealer snapshot.
+///
+/// Shows a "waiting for dealer" placeholder until the first snapshot arrives.
+pub fn render_table_view_spectate(state: &SpectateState, frame: &mut Frame, area: Rect) {
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(11), Constraint::Length(3)])
+        .split(area);
+
+    match &state.status {
+        Some(status) => {
+            let rows = status_to_rows(status);
+            render_seats(frame, chunks[0], &rows);
+            render_board_str(&status.board, status.pot, status.current_street, frame, chunks[1]);
+        }
+        None => {
+            let placeholder = Paragraph::new("Waiting for the dealer…")
+                .block(Block::default().borders(Borders::ALL).title(" Table "));
+            frame.render_widget(placeholder, chunks[0]);
+            render_board_str("", 0, Street::Unspecified as i32, frame, chunks[1]);
+        }
+    }
+}
+
+/// Builds `SeatRow`s from a proto `TableStatus`. Hole cards are already
+/// redacted by the dealer (empty `player_token`), so they are copied verbatim.
+fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
+    status
+        .seats
+        .iter()
+        .map(|s| {
+            let folded = s.state == PlayerState::Folded as i32
+                || s.state == PlayerState::Out as i32;
+            let active = status.hand_in_progress && s.seat_number == status.next_to_act;
+            let accent = if active { Accent::Active } else { Accent::None };
+            SeatRow {
+                seat: u8::try_from(s.seat_number).unwrap_or(u8::MAX),
+                name: s.player_name.clone(),
+                chips: s.chips as usize,
+                hole: s.cards.clone(),
+                bet: s.chips_in_play as usize,
+                // Position tags require the button seat, which TableStatus does
+                // not expose; left blank in v1 (documented gap).
+                tag: String::new(),
+                folded,
+                accent,
+                pnl: Some(s.profit_loss),
+            }
+        })
+        .collect()
+}
+
+/// Board renderer driven by the proto's pre-formatted board string + pot.
+fn render_board_str(board: &str, pot: u32, street: i32, frame: &mut Frame, area: Rect) {
+    let street_label = match Street::try_from(street) {
+        Ok(Street::Preflop) => "pre-flop",
+        Ok(Street::Flop) => "flop",
+        Ok(Street::Turn) => "turn",
+        Ok(Street::River) => "river",
+        _ => "—",
+    };
+    let board_display = if board.is_empty() {
+        "(pre-flop)".to_string()
+    } else {
+        board.to_string()
+    };
+    let spans = vec![
+        Span::styled("Board: ", Style::default().fg(Color::Gray)),
+        Span::styled(
+            board_display,
+            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("    "),
+        Span::styled("Pot: ", Style::default().fg(Color::Gray)),
+        Span::styled(
+            format!("{pot}"),
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        ),
+        Span::raw("    "),
+        Span::styled(
+            format!("street: {street_label}"),
+            Style::default().fg(Color::DarkGray),
+        ),
+    ];
+    let p = Paragraph::new(Text::from(vec![Line::from(spans)]))
+        .block(Block::default().borders(Borders::ALL).title(" Board "));
+    frame.render_widget(p, area);
+}
+
 /// Mutually-exclusive emphasis a single seat row can carry, in priority order
 /// (highest first). Packed into one field to keep [`SeatRow`] below clippy's
 /// `struct_excessive_bools` threshold.
@@ -100,6 +191,9 @@ struct SeatRow {
     tag: String,
     folded: bool,
     accent: Accent,
+    /// Signed profit/loss for the seat. `None` when the mode does not track
+    /// it (Play / Arena); `Some(_)` in Spectate mode from the dealer.
+    pnl: Option<i32>,
 }
 
 fn seat_rows<F: Fn(u8) -> String>(
@@ -165,6 +259,7 @@ fn seat_rows<F: Fn(u8) -> String>(
             tag,
             folded,
             accent,
+            pnl: None,
         });
     }
     out
@@ -248,6 +343,7 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         Cell::from("Bet"),
         Cell::from("Hole"),
         Cell::from("Pos"),
+        Cell::from("P/L"),
     ])
     .style(
         Style::default()
@@ -266,6 +362,7 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         // to fill spare width via `Constraint::Min`.
         Constraint::Min(60),
         Constraint::Length(8),
+        Constraint::Length(10),
     ];
 
     let body: Vec<Row> = rows
@@ -302,6 +399,13 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
             } else {
                 Cell::from(r.hole.clone())
             };
+            let pnl_cell = match r.pnl {
+                None => Cell::from("—").style(Style::default().fg(Color::DarkGray)),
+                Some(v) => {
+                    let color = if v >= 0 { Color::Green } else { Color::Red };
+                    Cell::from(format!("{v:+}")).style(Style::default().fg(color))
+                }
+            };
             Row::new(vec![
                 Cell::from(format!("{}", r.seat)),
                 Cell::from(r.name.clone()),
@@ -309,6 +413,7 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
                 Cell::from(badge),
                 hole_cell,
                 Cell::from(r.tag.clone()),
+                pnl_cell,
             ])
             .style(style)
         })
@@ -707,5 +812,112 @@ mod tests {
     #[test]
     fn position_tag_heads_up_btn_sb() {
         assert_eq!(position_tag(0, 0, 0, 1), Some("BTN/SB"));
+    }
+
+    #[test]
+    fn render_seats_shows_pnl_column_header() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let rows = vec![SeatRow {
+            seat: 0,
+            name: "gto".to_string(),
+            chips: 9_500,
+            hole: "??".to_string(),
+            bet: 500,
+            tag: String::new(),
+            folded: false,
+            accent: Accent::None,
+            pnl: Some(-500),
+        }];
+        let backend = TestBackend::new(120, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render_seats(f, f.area(), &rows))
+            .unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let header: String = (0..120).map(|x| buffer[(x, 1)].symbol()).collect();
+        assert!(header.contains("P/L"));
+    }
+
+    #[test]
+    fn status_to_rows_maps_seat_fields() {
+        use pkdealer_proto::dealer::{SeatInfo, TableStatus};
+
+        let status = TableStatus {
+            seats: vec![
+                SeatInfo {
+                    seat_number: 0,
+                    player_name: "gto".into(),
+                    chips: 9_500,
+                    cards: "??".into(),
+                    state: 4, // CALLED
+                    withdrawn: 10_000,
+                    chips_in_play: 500,
+                    profit_loss: -500,
+                },
+                SeatInfo {
+                    seat_number: 1,
+                    player_name: "lag".into(),
+                    chips: 0,
+                    cards: "??".into(),
+                    state: 8, // FOLDED
+                    withdrawn: 10_000,
+                    chips_in_play: 0,
+                    profit_loss: -10_000,
+                },
+            ],
+            board: "Ah Kd Qc".into(),
+            pot: 1_000,
+            next_to_act: 0,
+            hand_in_progress: true,
+            game_over: false,
+            current_street: 2,
+        };
+
+        let rows = status_to_rows(&status);
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "gto");
+        assert_eq!(rows[0].chips, 9_500);
+        assert_eq!(rows[0].bet, 500);
+        assert_eq!(rows[0].pnl, Some(-500));
+        assert_eq!(rows[0].accent, Accent::Active); // seat 0 == next_to_act
+        assert!(!rows[0].folded);
+        assert!(rows[1].folded); // FOLDED state
+        assert_eq!(rows[1].accent, Accent::None);
+    }
+
+    #[test]
+    fn render_table_view_spectate_does_not_panic() {
+        use crate::modes::SpectateState;
+        use pkdealer_proto::dealer::{SeatInfo, TableStatus};
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let (mut state, _tx) = SpectateState::detached("http://localhost:50051");
+        state.status = Some(TableStatus {
+            seats: vec![SeatInfo {
+                seat_number: 0,
+                player_name: "gto".into(),
+                chips: 9_500,
+                cards: "??".into(),
+                state: 4,
+                withdrawn: 10_000,
+                chips_in_play: 500,
+                profit_loss: -500,
+            }],
+            board: "Ah Kd Qc".into(),
+            pot: 1_000,
+            next_to_act: 0,
+            hand_in_progress: true,
+            game_over: false,
+            current_street: 2,
+        });
+
+        let backend = TestBackend::new(120, 18);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| render_table_view_spectate(&state, f, f.area()))
+            .unwrap();
     }
 }
