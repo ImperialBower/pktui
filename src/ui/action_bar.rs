@@ -30,6 +30,7 @@ pub fn render(app: &App, frame: &mut Frame, area: Rect) {
         AppMode::Play(p) => play_hints(p),
         AppMode::Arena(_) => vec![arena_hints()],
         AppMode::Replay(_) => vec![replay_hints()],
+        AppMode::Spectate(s) => vec![spectate_hints(s)],
     };
     let widget = Paragraph::new(Text::from(lines))
         .block(Block::default().borders(Borders::ALL).title(" Action "));

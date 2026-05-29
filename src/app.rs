@@ -2,7 +2,7 @@
 //!
 //! [`App`] owns:
 //!
-//! * The current [`AppMode`] (Play / Arena / Replay) and its per-mode state.
+//! * The current [`AppMode`] (Play / Arena / Replay / Spectate) and its per-mode state.
 //! * The shared rolling [`LogPanel`].
 //! * A `should_quit` flag the event loop polls each iteration.
 //! * A `help_visible` flag for the toggleable keyboard-shortcuts overlay.
@@ -13,7 +13,7 @@
 use crate::cli::{ArenaArgs, Command, PlayArgs, ReplayArgs};
 use crate::error::Result;
 use crate::log_panel::LogPanel;
-use crate::modes::{ArenaState, PlayState, ReplayState};
+use crate::modes::{ArenaState, PlayState, ReplayState, SpectateState};
 
 /// Top-level mode dispatch. Holds whichever per-mode state is live.
 pub enum AppMode {
@@ -23,10 +23,12 @@ pub enum AppMode {
     Arena(Box<ArenaState>),
     /// Read-only YAML replay.
     Replay(Box<ReplayState>),
+    /// Read-only spectator of a remote dealer.
+    Spectate(Box<SpectateState>),
 }
 
 impl AppMode {
-    /// Returns a short label (`"Play"`, `"Arena"`, `"Replay"`) for the
+    /// Returns a short label (`"Play"`, `"Arena"`, `"Replay"`, `"Spectate"`) for the
     /// titlebar.
     ///
     /// # Examples
@@ -47,6 +49,7 @@ impl AppMode {
             Self::Play(_) => "Play",
             Self::Arena(_) => "Arena",
             Self::Replay(_) => "Replay",
+            Self::Spectate(_) => "Spectate",
         }
     }
 }
@@ -88,6 +91,9 @@ impl App {
             Command::Arena(args) => AppMode::Arena(Box::new(ArenaState::new(&args, &mut log)?)),
             Command::Replay(args) => {
                 AppMode::Replay(Box::new(ReplayState::from_file(&args.path, &mut log)?))
+            }
+            Command::Spectate(args) => {
+                AppMode::Spectate(Box::new(SpectateState::new(args.endpoint)?))
             }
         };
         Ok(Self {
@@ -156,6 +162,22 @@ impl App {
     pub fn quit(&mut self) {
         self.should_quit = true;
     }
+
+    /// Drains any pending spectate messages into the model. No-op outside
+    /// Spectate mode. Called once per UI loop iteration by the binary.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// let mut app = pktui::App::play_default().unwrap();
+    /// app.poll_spectate(); // no-op in Play mode
+    /// ```
+    pub fn poll_spectate(&mut self) {
+        let Self { mode, log, .. } = self;
+        if let AppMode::Spectate(s) = mode {
+            s.drain(log);
+        }
+    }
 }
 
 // ReplayArgs is only used inside `App::new`; this re-export silences the
@@ -193,5 +215,14 @@ mod tests {
         let mut app = App::play_default().unwrap();
         app.quit();
         assert!(app.should_quit);
+    }
+
+    #[test]
+    fn spectate_mode_label() {
+        let cmd = crate::cli::Command::Spectate(crate::cli::SpectateArgs {
+            endpoint: "http://localhost:1".to_string(),
+        });
+        let app = App::new(cmd).unwrap();
+        assert_eq!(app.mode.label(), "Spectate");
     }
 }

@@ -64,6 +64,8 @@ pub enum Msg {
     ReplayNextStreet,
     /// Replay: previous street.
     ReplayPrevStreet,
+    /// Spectate: freeze/unfreeze the live snapshot display.
+    SpectateTogglePause,
     /// No-op (used for unrecognised keys so loops stay simple).
     Noop,
 }
@@ -120,6 +122,7 @@ fn key_to_msg(app: &App, key: &KeyEvent) -> Msg {
         AppMode::Play(p) => play_key(p.awaiting, key),
         AppMode::Arena(_) => arena_key(key),
         AppMode::Replay(_) => replay_key(key),
+        AppMode::Spectate(_) => spectate_key(key),
     }
 }
 
@@ -168,6 +171,14 @@ fn replay_key(key: &KeyEvent) -> Msg {
     }
 }
 
+fn spectate_key(key: &KeyEvent) -> Msg {
+    use KeyCode::Char;
+    match key.code {
+        Char(' ') => Msg::SpectateTogglePause,
+        _ => Msg::Noop,
+    }
+}
+
 /// Applies a [`Msg`] to the [`App`], producing the new model state.
 ///
 /// Engine errors are recorded into the log but never propagated out — a
@@ -203,6 +214,7 @@ pub fn update(app: &mut App, msg: Msg) -> Result<()> {
                 let _ = a.tick(&mut app.log);
             }
             AppMode::Replay(_) => {}
+            AppMode::Spectate(_) => {}
         },
         Msg::Action(action) => {
             if let AppMode::Play(p) = &mut app.mode
@@ -284,6 +296,11 @@ pub fn update(app: &mut App, msg: Msg) -> Result<()> {
         Msg::ReplayPrevStreet => {
             if let AppMode::Replay(r) = &mut app.mode {
                 r.prev_street();
+            }
+        }
+        Msg::SpectateTogglePause => {
+            if let AppMode::Spectate(s) = &mut app.mode {
+                s.paused = !s.paused;
             }
         }
     }
@@ -401,6 +418,17 @@ mod tests {
         let m = event_to_msg(&app, &Event::Key(k));
         assert!(matches!(m, Msg::ArenaFaster));
         update(&mut app, m).unwrap();
+    }
+
+    #[test]
+    fn space_in_spectate_toggles_pause() {
+        let cmd = crate::cli::Command::Spectate(crate::cli::SpectateArgs {
+            endpoint: "http://localhost:1".to_string(),
+        });
+        let app = App::new(cmd).unwrap();
+        let k = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE);
+        let m = event_to_msg(&app, &Event::Key(k));
+        assert!(matches!(m, Msg::SpectateTogglePause));
     }
 
     #[test]

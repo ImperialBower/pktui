@@ -45,6 +45,7 @@ pub fn view(app: &App, frame: &mut Frame) {
         AppMode::Play(p) => table::render_table_view_play(p, frame, chunks[1]),
         AppMode::Arena(a) => table::render_table_view_arena(a, frame, chunks[1]),
         AppMode::Replay(r) => replay_view::render(r, frame, chunks[1]),
+        AppMode::Spectate(s) => table::render_table_view_spectate(s, frame, chunks[1]),
     }
 
     log_view::render(&app.log, frame, chunks[2]);
@@ -81,6 +82,13 @@ fn render_header(app: &App, frame: &mut Frame, area: Rect) {
             format!("hand {}/{}", r.hand_index + 1, r.hand_count().max(1)),
             None,
         ),
+        AppMode::Spectate(s) => {
+            let mut subtitle = format!("{}  {}", s.endpoint, s.conn.label());
+            if let Some(c) = &s.config {
+                subtitle.push_str(&format!("  blinds {}/{}", c.small_blind, c.big_blind));
+            }
+            (subtitle, None)
+        }
     };
     let mut spans = vec![
         Span::styled(

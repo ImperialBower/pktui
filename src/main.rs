@@ -44,6 +44,7 @@ fn run(terminal: &mut tui::Tui, app: &mut App) -> Result<()> {
 
     while !app.should_quit {
         terminal.draw(|f| ui::view(app, f))?;
+        app.poll_spectate();
         let event = next_event(tick, &mut last_tick)?;
         let msg = event_to_msg(app, &event);
         update(app, msg)?;
