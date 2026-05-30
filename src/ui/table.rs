@@ -404,9 +404,9 @@ fn pad_card_slot(s: &str) -> String {
 /// `"A♠ A♥ K♦ Q♣ J♠ PairOfAces"`).
 ///
 /// Dispatches on board size so the column updates at every street:
-/// - 3 board cards (flop):  2 + 3 = 5 → [`Five`]
-/// - 4 board cards (turn):  2 + 4 = 6 → [`Six`]
-/// - 5 board cards (river): 2 + 5 = 7 → [`Seven`]
+/// - 3 board cards (flop):  2 + 3 = 5 → `Five`
+/// - 4 board cards (turn):  2 + 4 = 6 → `Six`
+/// - 5 board cards (river): 2 + 5 = 7 → `Seven`
 ///
 /// Returns `None` when the combined card count is outside 5–7 or parsing fails.
 fn holdem_board_analysis(hole: &str, board: &str) -> Option<String> {

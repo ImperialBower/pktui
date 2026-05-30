@@ -158,7 +158,7 @@ impl SpectateState {
     }
 
     /// Applies a single [`SpectateMsg`]. Pure with respect to the network —
-    /// unit-tested directly via [`SpectateState::detached`].
+    /// unit-tested directly via `SpectateState::detached`.
     fn apply(&mut self, msg: SpectateMsg, log: &mut LogPanel) {
         match msg {
             SpectateMsg::Event(ev) => {
