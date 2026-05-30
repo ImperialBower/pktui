@@ -20,6 +20,59 @@ pub mod log_view;
 pub mod replay_view;
 pub mod table;
 
+/// Reorders a space-separated hole-card string into descending rank order
+/// (the convention pkcore uses elsewhere via `sorted_display`), preserving
+/// each token's original glyph style.
+///
+/// Spectator and replay card strings arrive in dealt order using ASCII suits
+/// (e.g. `"2h Ad"`), whereas the live Play/Arena views already sort their
+/// hands. This brings the other views into line *without* restyling cards to
+/// Unicode the way `sorted_display` would — so a sorted `"Ad 2h"` still sits
+/// consistently beside an ASCII board.
+///
+/// Returns the input unchanged when it has fewer than two tokens, or when any
+/// token is not a recognizable card (e.g. the `"??"` muck placeholder) — so
+/// unknown markers are never reordered or dropped.
+///
+/// # Examples
+///
+/// ```
+/// use pktui::ui::sort_hole_cards;
+///
+/// assert_eq!(sort_hole_cards("2h Ad"), "Ad 2h");
+/// assert_eq!(sort_hole_cards("??"), "??");
+/// ```
+#[must_use]
+pub fn sort_hole_cards(cards: &str) -> String {
+    use std::str::FromStr as _;
+
+    // Pair each token with its parsed Card for ordering. A single token has
+    // nothing to reorder, so short-circuit and avoid re-allocating.
+    let tokens: Vec<&str> = cards.split_whitespace().collect();
+    if tokens.len() < 2 {
+        return cards.to_string();
+    }
+
+    let mut keyed: Vec<(pkcore::card::Card, &str)> = Vec::with_capacity(tokens.len());
+    for token in &tokens {
+        match pkcore::card::Card::from_str(token) {
+            Ok(card) => keyed.push((card, token)),
+            // Any non-card token (e.g. the "??" muck marker) means we can't
+            // meaningfully order the hand — hand it back untouched.
+            Err(_) => return cards.to_string(),
+        }
+    }
+
+    // Descending by rank — the same orientation as `sorted_display`, but we
+    // emit the original token so ASCII suits stay ASCII.
+    keyed.sort_unstable_by_key(|(card, _)| std::cmp::Reverse(*card));
+    keyed
+        .iter()
+        .map(|(_, token)| *token)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 /// Renders the whole app to `frame`.
 ///
 /// # Examples
@@ -140,6 +193,26 @@ mod tests {
     use pkdealer_proto::dealer::{TableConfig, TableStatus};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    #[test]
+    fn sort_hole_cards_orders_descending_by_rank() {
+        // Dealt order in, high-card-first out — preserving ASCII glyphs.
+        assert_eq!(sort_hole_cards("2h Ad"), "Ad 2h");
+        assert_eq!(sort_hole_cards("7c Kc Ah"), "Ah Kc 7c");
+    }
+
+    #[test]
+    fn sort_hole_cards_passes_through_unknown_tokens() {
+        // The muck placeholder and any non-card string must come back verbatim.
+        assert_eq!(sort_hole_cards("??"), "??");
+        assert_eq!(sort_hole_cards("Ah ??"), "Ah ??");
+        assert_eq!(sort_hole_cards(""), "");
+    }
+
+    #[test]
+    fn sort_hole_cards_single_card_is_unchanged() {
+        assert_eq!(sort_hole_cards("Ah"), "Ah");
+    }
 
     #[test]
     fn spectate_header_blinds_prefers_live_status() {

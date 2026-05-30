@@ -221,7 +221,9 @@ fn spectate_hints(state: &SpectateState) -> Line<'static> {
     Line::from(vec![
         Span::styled(
             "Spectate",
-            Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Magenta)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw("   "),
         Span::styled(

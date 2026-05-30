@@ -126,7 +126,7 @@ fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
             let hole = if folded {
                 "??".to_string()
             } else {
-                s.cards.clone()
+                crate::ui::sort_hole_cards(&s.cards)
             };
             SeatRow {
                 seat: u8::try_from(s.seat_number).unwrap_or(u8::MAX),
@@ -951,6 +951,28 @@ mod tests {
         assert!(!rows[0].folded);
         assert!(rows[1].folded); // FOLDED state
         assert_eq!(rows[1].accent, Accent::None);
+    }
+
+    #[test]
+    fn status_to_rows_sorts_revealed_hole_cards() {
+        use pkdealer_proto::dealer::{SeatInfo, TableStatus};
+
+        let status = TableStatus {
+            seats: vec![SeatInfo {
+                seat_number: 0,
+                player_name: "gto".into(),
+                chips: 9_500,
+                cards: "2h Ad".into(), // dealt order, low card first
+                state: 4,              // CALLED — still in the hand
+                ..Default::default()
+            }],
+            hand_in_progress: true,
+            ..Default::default()
+        };
+
+        let rows = status_to_rows(&status);
+        // Revealed cards are reordered high-first while keeping ASCII glyphs.
+        assert_eq!(rows[0].hole, "Ad 2h");
     }
 
     #[test]

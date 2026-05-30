@@ -16,9 +16,9 @@
 //! apply; for hold'em-family variants, `--small-blind` / `--big-blind` apply.
 //! Irrelevant forced-bet flags are ignored for the chosen variant.
 
+use crate::modes::spectate::DEFAULT_ENDPOINT;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
-use crate::modes::spectate::DEFAULT_ENDPOINT;
 
 /// Poker variant the engine will run.
 ///
@@ -397,8 +397,7 @@ mod tests {
 
     #[test]
     fn parses_spectate_with_endpoint() {
-        let cli =
-            Cli::try_parse_from(["pktui", "spectate", "--endpoint", "http://h:1"]).unwrap();
+        let cli = Cli::try_parse_from(["pktui", "spectate", "--endpoint", "http://h:1"]).unwrap();
         match cli.resolved() {
             Command::Spectate(s) => assert_eq!(s.endpoint, "http://h:1"),
             _ => panic!("expected spectate"),
