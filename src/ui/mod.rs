@@ -56,6 +56,22 @@ pub fn view(app: &App, frame: &mut Frame) {
     }
 }
 
+/// Picks the blinds to show in the spectate header.
+///
+/// Prefers the live `TableStatus` snapshot (which tracks blind-schedule
+/// escalation) when it carries non-zero blinds, and otherwise falls back to
+/// the once-fetched static `TableConfig`. Returns `None` when neither source
+/// is available yet.
+fn spectate_header_blinds(
+    status: Option<&pkdealer_proto::dealer::TableStatus>,
+    config: Option<&pkdealer_proto::dealer::TableConfig>,
+) -> Option<(u32, u32)> {
+    status
+        .map(|st| (st.small_blind, st.big_blind))
+        .filter(|&(sb, bb)| sb != 0 || bb != 0)
+        .or_else(|| config.map(|c| (c.small_blind, c.big_blind)))
+}
+
 fn render_header(app: &App, frame: &mut Frame, area: Rect) {
     let mode = app.mode.label();
     let (subtitle, seed) = match &app.mode {
@@ -84,8 +100,10 @@ fn render_header(app: &App, frame: &mut Frame, area: Rect) {
         ),
         AppMode::Spectate(s) => {
             let mut subtitle = format!("{}  {}", s.endpoint, s.conn.label());
-            if let Some(c) = &s.config {
-                subtitle.push_str(&format!("  blinds {}/{}", c.small_blind, c.big_blind));
+            if let Some((sb, bb)) =
+                spectate_header_blinds(s.status.as_ref(), s.config.as_ref())
+            {
+                subtitle.push_str(&format!("  blinds {sb}/{bb}"));
             }
             (subtitle, None)
         }
@@ -119,8 +137,49 @@ fn render_header(app: &App, frame: &mut Frame, area: Rect) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pkdealer_proto::dealer::{TableConfig, TableStatus};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
+
+    #[test]
+    fn spectate_header_blinds_prefers_live_status() {
+        let status = TableStatus {
+            small_blind: 200,
+            big_blind: 400,
+            ..Default::default()
+        };
+        let config = TableConfig {
+            small_blind: 50,
+            big_blind: 100,
+            ..Default::default()
+        };
+        // Live status (escalated) wins over the once-fetched static config.
+        assert_eq!(
+            spectate_header_blinds(Some(&status), Some(&config)),
+            Some((200, 400))
+        );
+    }
+
+    #[test]
+    fn spectate_header_blinds_falls_back_to_config_when_status_zero() {
+        // A status snapshot from before any blinds are known (0/0) must not
+        // mask the static config.
+        let status = TableStatus::default();
+        let config = TableConfig {
+            small_blind: 50,
+            big_blind: 100,
+            ..Default::default()
+        };
+        assert_eq!(
+            spectate_header_blinds(Some(&status), Some(&config)),
+            Some((50, 100))
+        );
+    }
+
+    #[test]
+    fn spectate_header_blinds_none_when_nothing_known() {
+        assert_eq!(spectate_header_blinds(None, None), None);
+    }
 
     fn draw_and_assert(app: &App) {
         let backend = TestBackend::new(120, 36);

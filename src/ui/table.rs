@@ -928,6 +928,8 @@ mod tests {
             hand_in_progress: true,
             game_over: false,
             current_street: 2,
+            small_blind: 50,
+            big_blind: 100,
         };
 
         let rows = status_to_rows(&status);
@@ -977,6 +979,8 @@ mod tests {
             hand_in_progress: true,
             game_over: false,
             current_street: 2,
+            small_blind: 50,
+            big_blind: 100,
         };
 
         let rows = status_to_rows(&status);
@@ -1026,6 +1030,8 @@ mod tests {
             hand_in_progress: true,
             game_over: false,
             current_street: 2,
+            small_blind: 50,
+            big_blind: 100,
         });
 
         let backend = TestBackend::new(120, 18);
@@ -1056,6 +1062,8 @@ mod tests {
             hand_in_progress: true,
             game_over: false,
             current_street: 1,
+            small_blind: 50,
+            big_blind: 100,
         };
         let rows = status_to_rows(&status);
         assert!(rows[0].folded);

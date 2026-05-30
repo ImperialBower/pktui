@@ -298,6 +298,8 @@ mod tests {
             hand_in_progress: true,
             game_over: false,
             current_street: 2, // FLOP
+            small_blind: 50,
+            big_blind: 100,
         }
     }
 
