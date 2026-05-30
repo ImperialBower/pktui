@@ -18,7 +18,7 @@
 use pkcore::casino::table_no_cell::{SeatNoCell, TableNoCell};
 use pkcore::play::hole_card::HoleCard;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table as TableWidget};
@@ -37,7 +37,7 @@ use pkdealer_proto::dealer::{PlayerState, Street, TableStatus};
 pub fn render_table_view_play(state: &PlayState, frame: &mut Frame, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(11), Constraint::Length(3)])
+        .constraints([Constraint::Length(3), Constraint::Min(11)])
         .split(area);
 
     let active_seat = match state.awaiting {
@@ -54,15 +54,15 @@ pub fn render_table_view_play(state: &PlayState, frame: &mut Frame, area: Rect) 
         reveal_at_showdown,
         |seat| state.seat_name(seat),
     );
-    render_seats(frame, chunks[0], &rows);
-    render_board(&state.session.table, frame, chunks[1]);
+    render_board(&state.session.table, frame, chunks[0]);
+    render_seats(frame, chunks[1], &rows);
 }
 
 /// Renders the table view for Arena mode.
 pub fn render_table_view_arena(state: &ArenaState, frame: &mut Frame, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(11), Constraint::Length(3)])
+        .constraints([Constraint::Length(3), Constraint::Min(11)])
         .split(area);
 
     let active_seat = if matches!(state.phase, crate::modes::arena::ArenaPhase::Running) {
@@ -74,8 +74,8 @@ pub fn render_table_view_arena(state: &ArenaState, frame: &mut Frame, area: Rect
     let rows = seat_rows(&state.session.table, None, active_seat, None, |seat| {
         state.seat_name(seat)
     });
-    render_seats(frame, chunks[0], &rows);
-    render_board(&state.session.table, frame, chunks[1]);
+    render_board(&state.session.table, frame, chunks[0]);
+    render_seats(frame, chunks[1], &rows);
 }
 
 /// Renders the read-only spectator table from the latest dealer snapshot.
@@ -84,24 +84,24 @@ pub fn render_table_view_arena(state: &ArenaState, frame: &mut Frame, area: Rect
 pub fn render_table_view_spectate(state: &SpectateState, frame: &mut Frame, area: Rect) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Min(11), Constraint::Length(3)])
+        .constraints([Constraint::Length(3), Constraint::Min(11)])
         .split(area);
 
     if let Some(status) = &state.status {
-        let rows = status_to_rows(status);
-        render_seats(frame, chunks[0], &rows);
         render_board_str(
             &status.board,
             status.pot,
             status.current_street,
             frame,
-            chunks[1],
+            chunks[0],
         );
+        let rows = status_to_rows(status);
+        render_seats(frame, chunks[1], &rows);
     } else {
+        render_board_str("", 0, Street::Unspecified as i32, frame, chunks[0]);
         let placeholder = Paragraph::new("Waiting for the dealer…")
             .block(Block::default().borders(Borders::ALL).title(" Table "));
-        frame.render_widget(placeholder, chunks[0]);
-        render_board_str("", 0, Street::Unspecified as i32, frame, chunks[1]);
+        frame.render_widget(placeholder, chunks[1]);
     }
 }
 
@@ -215,7 +215,8 @@ fn render_board_str(board: &str, pot: u32, street: i32, frame: &mut Frame, area:
         ),
     ];
     let p = Paragraph::new(Text::from(vec![Line::from(spans)]))
-        .block(Block::default().borders(Borders::ALL).title(" Board "));
+        .block(Block::default().borders(Borders::ALL).title(" Board "))
+        .alignment(Alignment::Right);
     frame.render_widget(p, area);
 }
 
@@ -572,7 +573,8 @@ fn render_board(table: &TableNoCell, frame: &mut Frame, area: Rect) {
     ));
 
     let p = Paragraph::new(Text::from(vec![Line::from(spans)]))
-        .block(Block::default().borders(Borders::ALL).title(" Board "));
+        .block(Block::default().borders(Borders::ALL).title(" Board "))
+        .alignment(Alignment::Right);
     frame.render_widget(p, area);
 }
 
