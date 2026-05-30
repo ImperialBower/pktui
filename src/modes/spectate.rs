@@ -127,7 +127,7 @@ impl SpectateState {
         let ep = endpoint.clone();
         let handle = thread::Builder::new()
             .name("pktui-spectate".to_string())
-            .spawn(move || run_stream(ep, &tx))
+            .spawn(move || run_stream(&ep, &tx))
             .map_err(Error::Io)?;
         Ok(Self {
             endpoint,
@@ -178,7 +178,10 @@ impl SpectateState {
             }
             SpectateMsg::Conn(state) => {
                 if self.conn != state {
-                    log.push(Severity::Info, format!("{} ({})", state.label(), self.endpoint));
+                    log.push(
+                        Severity::Info,
+                        format!("{} ({})", state.label(), self.endpoint),
+                    );
                 }
                 self.conn = state;
             }
@@ -216,7 +219,7 @@ fn severity_for(event_type: i32) -> Severity {
 
 /// Worker-thread entry point: owns a current-thread tokio runtime and the
 /// reconnect loop. Exits when the receiver is dropped (UI quit).
-fn run_stream(endpoint: String, tx: &Sender<SpectateMsg>) {
+fn run_stream(endpoint: &str, tx: &Sender<SpectateMsg>) {
     let Ok(rt) = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
@@ -226,7 +229,7 @@ fn run_stream(endpoint: String, tx: &Sender<SpectateMsg>) {
     };
     rt.block_on(async {
         loop {
-            let _ = connect_and_stream(&endpoint, tx).await;
+            let _ = connect_and_stream(endpoint, tx).await;
             // Either a connect failure or a clean stream end: signal and retry.
             if tx.send(SpectateMsg::Conn(ConnState::Disconnected)).is_err() {
                 break; // receiver dropped → UI quit → stop the thread
@@ -267,8 +270,7 @@ async fn connect_and_stream(
         .into_inner();
 
     while let Some(ev) = stream.message().await.map_err(|_| ())? {
-        tx.send(SpectateMsg::Event(Box::new(ev)))
-            .map_err(|_| ())?;
+        tx.send(SpectateMsg::Event(Box::new(ev))).map_err(|_| ())?;
     }
     Ok(())
 }

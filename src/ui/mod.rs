@@ -4,6 +4,8 @@
 //! a [`Frame`]. Internally it dispatches to one of the per-mode views
 //! ([`table`], [`replay_view`]) and overlays the help dialog if enabled.
 
+use std::fmt::Write as _;
+
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -100,10 +102,8 @@ fn render_header(app: &App, frame: &mut Frame, area: Rect) {
         ),
         AppMode::Spectate(s) => {
             let mut subtitle = format!("{}  {}", s.endpoint, s.conn.label());
-            if let Some((sb, bb)) =
-                spectate_header_blinds(s.status.as_ref(), s.config.as_ref())
-            {
-                subtitle.push_str(&format!("  blinds {sb}/{bb}"));
+            if let Some((sb, bb)) = spectate_header_blinds(s.status.as_ref(), s.config.as_ref()) {
+                let _ = write!(subtitle, "  blinds {sb}/{bb}");
             }
             (subtitle, None)
         }

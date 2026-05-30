@@ -23,9 +23,9 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Borders, Cell, Paragraph, Row, Table as TableWidget};
 
+use crate::modes::SpectateState;
 use crate::modes::play::{HERO_SEAT, ShowdownSeat};
 use crate::modes::{ArenaState, Awaiting, PlayState};
-use crate::modes::SpectateState;
 use pkdealer_proto::dealer::{PlayerState, Street, TableStatus};
 
 /// Renders the table view for Play mode.
@@ -87,18 +87,21 @@ pub fn render_table_view_spectate(state: &SpectateState, frame: &mut Frame, area
         .constraints([Constraint::Min(11), Constraint::Length(3)])
         .split(area);
 
-    match &state.status {
-        Some(status) => {
-            let rows = status_to_rows(status);
-            render_seats(frame, chunks[0], &rows);
-            render_board_str(&status.board, status.pot, status.current_street, frame, chunks[1]);
-        }
-        None => {
-            let placeholder = Paragraph::new("Waiting for the dealer…")
-                .block(Block::default().borders(Borders::ALL).title(" Table "));
-            frame.render_widget(placeholder, chunks[0]);
-            render_board_str("", 0, Street::Unspecified as i32, frame, chunks[1]);
-        }
+    if let Some(status) = &state.status {
+        let rows = status_to_rows(status);
+        render_seats(frame, chunks[0], &rows);
+        render_board_str(
+            &status.board,
+            status.pot,
+            status.current_street,
+            frame,
+            chunks[1],
+        );
+    } else {
+        let placeholder = Paragraph::new("Waiting for the dealer…")
+            .block(Block::default().borders(Borders::ALL).title(" Table "));
+        frame.render_widget(placeholder, chunks[0]);
+        render_board_str("", 0, Street::Unspecified as i32, frame, chunks[1]);
     }
 }
 
@@ -109,10 +112,14 @@ fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
         .seats
         .iter()
         .map(|s| {
-            let folded = s.state == PlayerState::Folded as i32
-                || s.state == PlayerState::Out as i32;
+            let folded =
+                s.state == PlayerState::Folded as i32 || s.state == PlayerState::Out as i32;
             let active = status.hand_in_progress && s.seat_number == status.next_to_act;
-            let accent = if active && !folded { Accent::Active } else { Accent::None };
+            let accent = if active && !folded {
+                Accent::Active
+            } else {
+                Accent::None
+            };
             // The spectator stream reveals every seat's cards; show them only
             // for players still contesting the hand. A folded/out seat's hand
             // is mucked, so keep it hidden as `??`.
@@ -178,13 +185,17 @@ fn render_board_str(board: &str, pot: u32, street: i32, frame: &mut Frame, area:
         Span::styled("Board: ", Style::default().fg(Color::Gray)),
         Span::styled(
             board_display,
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw("    "),
         Span::styled("Pot: ", Style::default().fg(Color::Gray)),
         Span::styled(
             format!("{pot}"),
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(Color::Green)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw("    "),
         Span::styled(
@@ -882,9 +893,7 @@ mod tests {
         }];
         let backend = TestBackend::new(120, 12);
         let mut terminal = Terminal::new(backend).unwrap();
-        terminal
-            .draw(|f| render_seats(f, f.area(), &rows))
-            .unwrap();
+        terminal.draw(|f| render_seats(f, f.area(), &rows)).unwrap();
         let buffer = terminal.backend().buffer().clone();
         let header: String = (0..120).map(|x| buffer[(x, 1)].symbol()).collect();
         assert!(header.contains("P/L"));
@@ -996,9 +1005,18 @@ mod tests {
         assert_eq!(last_action_label(PlayerState::Folded as i32, 0), "fold");
         assert_eq!(last_action_label(PlayerState::Checked as i32, 0), "check");
         assert_eq!(last_action_label(PlayerState::Bet as i32, 100), "bet 100");
-        assert_eq!(last_action_label(PlayerState::Raised as i32, 300), "raise 300");
-        assert_eq!(last_action_label(PlayerState::Called as i32, 100), "call 100");
-        assert_eq!(last_action_label(PlayerState::AllIn as i32, 9_500), "all-in 9500");
+        assert_eq!(
+            last_action_label(PlayerState::Raised as i32, 300),
+            "raise 300"
+        );
+        assert_eq!(
+            last_action_label(PlayerState::Called as i32, 100),
+            "call 100"
+        );
+        assert_eq!(
+            last_action_label(PlayerState::AllIn as i32, 9_500),
+            "all-in 9500"
+        );
         // Not-yet-acted / idle states carry no label.
         assert_eq!(last_action_label(PlayerState::YetToAct as i32, 0), "");
         assert_eq!(last_action_label(PlayerState::Ready as i32, 0), "");
@@ -1058,7 +1076,7 @@ mod tests {
             }],
             board: String::new(),
             pot: 0,
-            next_to_act: 0,          // points at the folded seat
+            next_to_act: 0, // points at the folded seat
             hand_in_progress: true,
             game_over: false,
             current_street: 1,

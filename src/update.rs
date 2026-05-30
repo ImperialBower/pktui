@@ -200,6 +200,10 @@ fn spectate_key(key: &KeyEvent) -> Msg {
 /// update(&mut app, Msg::Quit).unwrap();
 /// assert!(app.should_quit);
 /// ```
+// Central message dispatcher: one arm per `Msg` variant. The length is
+// inherent to the dispatch table, so splitting it would only scatter the
+// mapping without making it clearer.
+#[allow(clippy::too_many_lines)]
 pub fn update(app: &mut App, msg: Msg) -> Result<()> {
     match msg {
         Msg::Quit => app.quit(),
@@ -213,8 +217,7 @@ pub fn update(app: &mut App, msg: Msg) -> Result<()> {
             AppMode::Arena(a) => {
                 let _ = a.tick(&mut app.log);
             }
-            AppMode::Replay(_) => {}
-            AppMode::Spectate(_) => {}
+            AppMode::Replay(_) | AppMode::Spectate(_) => {}
         },
         Msg::Action(action) => {
             if let AppMode::Play(p) = &mut app.mode
