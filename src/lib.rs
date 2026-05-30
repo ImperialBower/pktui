@@ -5,7 +5,9 @@
 //! [pkarena0-web](https://github.com/ImperialBower/pkarena0-web) front end
 //! (one-human-vs-eight-bots **Play** mode, all-bot **Arena** mode, YAML
 //! **Replay** mode) but renders to the terminal using ratatui widgets instead
-//! of an SVG table.
+//! of an SVG table. It also provides a read-only **Spectate** mode that
+//! connects to a live [`pkdealer`](https://github.com/ImperialBower/pkdealer)
+//! table via gRPC and renders the table with per-seat profit/loss tracking.
 //!
 //! # Architecture
 //!
@@ -25,9 +27,11 @@
 //!
 //! Run interactively:
 //! ```text
-//! cargo run -- play           # one human vs eight bots (default)
-//! cargo run -- arena          # nine bots, watch-only
+//! cargo run -- play                             # one human vs eight bots (default)
+//! cargo run -- arena                            # nine bots, watch-only
 //! cargo run -- replay session.yaml
+//! cargo run -- spectate                         # watch a live pkdealer table
+//! cargo run -- spectate --endpoint http://host:50051
 //! ```
 //!
 //! # Modules
@@ -37,7 +41,8 @@
 //! * [`config`] — TOML config loaded from `~/.config/pktui/config.toml`.
 //! * [`event`] — crossterm event polling with a tick timer for bot pacing.
 //! * [`log_panel`] — the rolling event-log buffer.
-//! * [`modes`] — per-mode initialisation (`play`, `arena`, `replay`).
+//! * [`modes`] — per-mode initialisation (`play`, `arena`, `replay`,
+//!   `spectate`).
 //! * [`tui`] — terminal raw-mode init / restore.
 //! * [`ui`] — render functions for the table, action bar, log and help.
 //! * [`update`] — message reducer.

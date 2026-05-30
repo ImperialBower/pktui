@@ -16,6 +16,7 @@
 //! apply; for hold'em-family variants, `--small-blind` / `--big-blind` apply.
 //! Irrelevant forced-bet flags are ignored for the chosen variant.
 
+use crate::modes::spectate::DEFAULT_ENDPOINT;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
@@ -119,6 +120,8 @@ pub enum Command {
     Arena(ArenaArgs),
     /// Replay a saved YAML hand collection street-by-street.
     Replay(ReplayArgs),
+    /// Read-only viewer of a live `pkdealer_service` table over gRPC.
+    Spectate(SpectateArgs),
 }
 
 /// Common knobs shared across `play` and `arena`.
@@ -233,6 +236,30 @@ pub struct ReplayArgs {
     /// Path to a `HandCollection` YAML file (as produced by pkcore's
     /// `interactive_play` example or pktui's own session save).
     pub path: PathBuf,
+}
+
+/// Arguments to the `spectate` subcommand.
+///
+/// # Examples
+///
+/// ```
+/// use pktui::cli::SpectateArgs;
+/// let args = SpectateArgs::default();
+/// assert_eq!(args.endpoint, "http://localhost:50051");
+/// ```
+#[derive(Args, Debug, Clone)]
+pub struct SpectateArgs {
+    /// gRPC endpoint of the dealer service.
+    #[arg(long, default_value = DEFAULT_ENDPOINT)]
+    pub endpoint: String,
+}
+
+impl Default for SpectateArgs {
+    fn default() -> Self {
+        Self {
+            endpoint: DEFAULT_ENDPOINT.to_string(),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -365,6 +392,24 @@ mod tests {
                 assert_eq!(p.game.big_bet, None);
             }
             _ => panic!(),
+        }
+    }
+
+    #[test]
+    fn parses_spectate_with_endpoint() {
+        let cli = Cli::try_parse_from(["pktui", "spectate", "--endpoint", "http://h:1"]).unwrap();
+        match cli.resolved() {
+            Command::Spectate(s) => assert_eq!(s.endpoint, "http://h:1"),
+            _ => panic!("expected spectate"),
+        }
+    }
+
+    #[test]
+    fn spectate_endpoint_defaults_to_localhost() {
+        let cli = Cli::try_parse_from(["pktui", "spectate"]).unwrap();
+        match cli.resolved() {
+            Command::Spectate(s) => assert_eq!(s.endpoint, "http://localhost:50051"),
+            _ => panic!("expected spectate"),
         }
     }
 }

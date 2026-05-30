@@ -22,6 +22,8 @@ cargo run --release -- arena --variant plo         # all-bot PLO (9 bots)
 cargo run --release -- arena --variant stud-hi     # all-bot Stud Hi (6 bots)
 cargo run --release -- arena --variant razz        # all-bot Razz (6 bots)
 cargo run --release -- replay path/to/session.yaml # step through saved hand history
+cargo run --release -- spectate                          # watch a live pkdealer table (http://localhost:50051)
+cargo run --release -- spectate --endpoint http://host:50051
 ```
 
 ### Variants and seat caps
@@ -66,16 +68,28 @@ section to build against the published crate exclusively.
 
 ## Modes
 
-| Mode    | Subcommand                | Description                                          |
-|---------|---------------------------|------------------------------------------------------|
-| Play    | `pktui play`              | One human at seat 0; bots at the remaining seats. NLHE seats 8 bots, stud-family seats 5. |
-| Arena   | `pktui arena`             | Bots only, watch-only. NLHE seats 9, stud-family seats 6. Use `+` / `-` to adjust pace. |
-| Replay  | `pktui replay <FILE>`     | Step through a saved `HandCollection` YAML file.     |
+| Mode     | Subcommand                      | Description                                          |
+|----------|---------------------------------|------------------------------------------------------|
+| Play     | `pktui play`                    | One human at seat 0; bots at the remaining seats. NLHE seats 8 bots, stud-family seats 5. |
+| Arena    | `pktui arena`                   | Bots only, watch-only. NLHE seats 9, stud-family seats 6. Use `+` / `-` to adjust pace. |
+| Replay   | `pktui replay <FILE>`           | Step through a saved `HandCollection` YAML file.     |
+| Spectate | `pktui spectate [--endpoint …]` | Read-only live viewer of a running `pkdealer` table. |
 
 All live modes accept `--variant {nlhe,plo,stud-hi,razz}`, `--seed N`, and
 `--chips N`. Hold'em-family (NLHE, PLO) adds `--small-blind` / `--big-blind`;
 stud-family adds `--ante` / `--bring-in` / `--small-bet` / `--big-bet`.
 Arena additionally accepts `--speed-ms N` (default 800).
+
+### Spectate mode
+
+`spectate` is a read-only viewer of a live
+[`pkdealer`](https://github.com/ImperialBower/pkdealer) table. It connects to
+the dealer's gRPC `StreamEvents` endpoint and renders the table, a per-seat
+profit/loss column, and a rolling event log — the terminal counterpart to the
+web `pkspectator`. It needs the `pkdealer` repo checked out as a sibling
+(`../pkdealer`) so the shared protobuf crate is available. Press `space` to
+freeze/unfreeze the display, `q` to quit. The viewer auto-reconnects if the
+dealer restarts.
 
 ## Keyboard
 
@@ -99,6 +113,7 @@ Arena additionally accepts `--speed-ms N` (default 800).
 | Replay     | `p` / `←`      | Previous street                                                 |
 | Replay     | `N` / `Enter`  | Next hand                                                       |
 | Replay     | `P`            | Previous hand                                                   |
+| Spectate   | `space`        | Freeze / unfreeze the display                                   |
 
 ## Config file
 

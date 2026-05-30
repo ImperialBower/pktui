@@ -67,12 +67,16 @@ fn render_header(hand: &HandHistory, street: usize, frame: &mut Frame, area: Rec
         Line::raw("seat  name                    stack  hole"),
     ];
     for p in &hand.players {
+        let hole = p
+            .hole_cards
+            .as_deref()
+            .map_or_else(|| "??".to_string(), crate::ui::sort_hole_cards);
         lines.push(Line::raw(format!(
             "{:>4}  {:<22}  {:>5}  {}",
             p.seat,
             p.name,
             chips(p.stack),
-            p.hole_cards.as_deref().unwrap_or("??"),
+            hole,
         )));
     }
     let widget = Paragraph::new(Text::from(lines))

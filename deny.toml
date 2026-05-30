@@ -73,6 +73,10 @@ private = { ignore = true }
 multiple-versions = "warn"
 # Lint level for when a crate version requirement is `*`
 wildcards = "warn"
+# Allow wildcard versions for path/git dependencies. `pkdealer_proto` is a
+# deliberate cross-repo git dependency (no published version to pin), so its
+# wildcard is expected; registry deps are still held to the `wildcards` rule.
+allow-wildcard-paths = true
 # The graph highlighting used when creating dotgraphs for crates
 # with multiple versions
 highlight = "all"
@@ -94,9 +98,14 @@ skip = []
 #   compatibility. None of those are things pktui can change.
 # * ratatui — kasuari pulls hashbrown 0.16 and strum 0.27, both of which
 #   conflict with the pkcore-side versions.
+# * tonic — tonic 0.12 pulls tower 0.4 and socket2 0.5, while its own axum /
+#   hyper-util / tokio bring tower 0.5 and socket2 0.6. The skew lives entirely
+#   inside the tonic stack; resolving it means upgrading to tonic 0.13, which
+#   pktui shares with pkdealer_proto and is out of scope here.
 skip-tree = [
     { name = "pkcore" },
     { name = "ratatui" },
+    { name = "tonic" },
 ]
 
 [sources]
@@ -110,6 +119,7 @@ unknown-git = "warn"
 # if not specified. If it is specified but empty, no registries from URLs
 # will be allowed.
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# List of URLs for allowed Git repositories
-allow-git = []
+# List of URLs for allowed Git repositories. pkdealer hosts the `pkdealer_proto`
+# crate that pktui pulls as a git dependency (see Cargo.toml).
+allow-git = ["https://github.com/ImperialBower/pkdealer"]
 
