@@ -412,8 +412,8 @@ fn pad_card_slot(s: &str) -> String {
 fn holdem_board_analysis(hole: &str, board: &str) -> Option<String> {
     use pkcore::arrays::HandRanker;
     use pkcore::arrays::five::Five;
-    use pkcore::arrays::six::Six;
     use pkcore::arrays::seven::Seven;
+    use pkcore::arrays::six::Six;
     use std::str::FromStr;
     let combined = format!("{hole} {board}");
     let (rank, hand) = match board.split_whitespace().count() {
