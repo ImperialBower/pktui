@@ -108,6 +108,9 @@ pub fn render_table_view_spectate(state: &SpectateState, frame: &mut Frame, area
 /// Builds `SeatRow`s from a proto `TableStatus`. Hole cards are already
 /// redacted by the dealer (empty `player_token`), so they are copied verbatim.
 fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
+    let btn = u8::try_from(status.button_seat).unwrap_or(u8::MAX);
+    let sb = u8::try_from(status.small_blind_seat).unwrap_or(u8::MAX);
+    let bb = u8::try_from(status.big_blind_seat).unwrap_or(u8::MAX);
     status
         .seats
         .iter()
@@ -128,8 +131,12 @@ fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
             } else {
                 crate::ui::sort_hole_cards(&s.cards)
             };
+            let seat = u8::try_from(s.seat_number).unwrap_or(u8::MAX);
+            let tag = position_tag(seat, btn, sb, bb)
+                .map(str::to_owned)
+                .unwrap_or_default();
             SeatRow {
-                seat: u8::try_from(s.seat_number).unwrap_or(u8::MAX),
+                seat,
                 name: s.player_name.clone(),
                 chips: s.chips as usize,
                 hole,
@@ -137,9 +144,7 @@ fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
                 // hand-cumulative `chips_in_play`, so the column clears between
                 // betting rounds.
                 bet: s.bet as usize,
-                // Position tags require the button seat, which TableStatus does
-                // not expose; left blank in v1 (documented gap).
-                tag: String::new(),
+                tag,
                 folded,
                 accent,
                 pnl: Some(s.profit_loss),
@@ -939,6 +944,7 @@ mod tests {
             current_street: 2,
             small_blind: 50,
             big_blind: 100,
+            ..Default::default()
         };
 
         let rows = status_to_rows(&status);
@@ -1012,6 +1018,7 @@ mod tests {
             current_street: 2,
             small_blind: 50,
             big_blind: 100,
+            ..Default::default()
         };
 
         let rows = status_to_rows(&status);
@@ -1072,6 +1079,7 @@ mod tests {
             current_street: 2,
             small_blind: 50,
             big_blind: 100,
+            ..Default::default()
         });
 
         let backend = TestBackend::new(120, 18);
@@ -1104,9 +1112,51 @@ mod tests {
             current_street: 1,
             small_blind: 50,
             big_blind: 100,
+            ..Default::default()
         };
         let rows = status_to_rows(&status);
         assert!(rows[0].folded);
         assert_eq!(rows[0].accent, Accent::None);
+    }
+
+    #[test]
+    fn status_to_rows_position_tags_from_proto() {
+        use pkdealer_proto::dealer::{SeatInfo, TableStatus};
+
+        fn seat(n: u32) -> SeatInfo {
+            SeatInfo {
+                seat_number: n,
+                player_name: format!("p{n}"),
+                chips: 1_000,
+                ..Default::default()
+            }
+        }
+
+        // 3-handed: BTN=0, SB=1, BB=2
+        let status = TableStatus {
+            seats: vec![seat(0), seat(1), seat(2)],
+            hand_in_progress: true,
+            button_seat: 0,
+            small_blind_seat: 1,
+            big_blind_seat: 2,
+            ..Default::default()
+        };
+        let rows = status_to_rows(&status);
+        assert_eq!(rows[0].tag, "BTN");
+        assert_eq!(rows[1].tag, "SB");
+        assert_eq!(rows[2].tag, "BB");
+
+        // Heads-up: BTN/SB=0, BB=1
+        let hu_status = TableStatus {
+            seats: vec![seat(0), seat(1)],
+            hand_in_progress: true,
+            button_seat: 0,
+            small_blind_seat: 0,
+            big_blind_seat: 1,
+            ..Default::default()
+        };
+        let hu_rows = status_to_rows(&hu_status);
+        assert_eq!(hu_rows[0].tag, "BTN/SB");
+        assert_eq!(hu_rows[1].tag, "BB");
     }
 }

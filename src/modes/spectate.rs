@@ -302,6 +302,7 @@ mod tests {
             current_street: 2, // FLOP
             small_blind: 50,
             big_blind: 100,
+            ..Default::default()
         }
     }
 
