@@ -3,6 +3,10 @@ name = "pktui"
 version = "0.0.4"
 edition = "2024"
 rust-version = "1.94.1"
+# Not publishable: the `pkdealer_proto` dependency is a cross-repo path
+# dependency, which crates.io disallows. Marking this private also lets
+# cargo-deny's `allow-wildcard-paths` apply to that path dependency.
+publish = false
 description = "Ratatui terminal client for the pkcore poker engine."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/ImperialBower/pktui"
