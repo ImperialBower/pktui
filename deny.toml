@@ -74,7 +74,7 @@ multiple-versions = "warn"
 # Lint level for when a crate version requirement is `*`
 wildcards = "warn"
 # Allow wildcard versions for path/git dependencies. `pkdealer_proto` is a
-# deliberate cross-repo path dependency (no published version to pin), so its
+# deliberate cross-repo git dependency (no published version to pin), so its
 # wildcard is expected; registry deps are still held to the `wildcards` rule.
 allow-wildcard-paths = true
 # The graph highlighting used when creating dotgraphs for crates
@@ -119,6 +119,7 @@ unknown-git = "warn"
 # if not specified. If it is specified but empty, no registries from URLs
 # will be allowed.
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
-# List of URLs for allowed Git repositories
-allow-git = []
+# List of URLs for allowed Git repositories. pkdealer hosts the `pkdealer_proto`
+# crate that pktui pulls as a git dependency (see Cargo.toml).
+allow-git = ["https://github.com/ImperialBower/pkdealer"]
 

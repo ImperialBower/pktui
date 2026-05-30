@@ -3,9 +3,9 @@ name = "pktui"
 version = "0.0.4"
 edition = "2024"
 rust-version = "1.94.1"
-# Not publishable: the `pkdealer_proto` dependency is a cross-repo path
+# Not publishable: the `pkdealer_proto` dependency is a cross-repo git
 # dependency, which crates.io disallows. Marking this private also lets
-# cargo-deny's `allow-wildcard-paths` apply to that path dependency.
+# cargo-deny's `allow-wildcard-paths` apply to that git dependency.
 publish = false
 description = "Ratatui terminal client for the pkcore poker engine."
 license = "MIT OR Apache-2.0"
@@ -23,7 +23,12 @@ dirs = "6"
 pkcore = { version = "0.1.1", features = ["bot-profiles", "hand-histories"] }
 tokio = { version = "1", features = ["rt", "time"] }
 tonic = { version = "0.12", features = ["transport"] }
-pkdealer_proto = { path = "../pkdealer/crates/pkdealer_proto" }
+# pkdealer_proto lives in the pkdealer workspace (formerly named "pkgrpc"). It is
+# pulled as a git dependency rather than a path dependency so pktui's CI — which
+# checks out only this repo — can resolve it without a sibling `../pkdealer`
+# checkout. The whole repo is cloned, so the build script finds the workspace-root
+# `proto/dealer.proto` it compiles.
+pkdealer_proto = { git = "https://github.com/ImperialBower/pkdealer", branch = "main" }
 
 [dev-dependencies]
 tempfile = "3"
@@ -33,6 +38,12 @@ tempfile = "3"
 # build against crates.io exclusively.
 #[patch.crates-io]
 #pkcore = { path = "../pkcore" }
+
+# While iterating on the proto + UI together, override the git dependency with the
+# local sibling checkout. Uncomment to build against the local pkdealer workspace,
+# then re-comment before committing so CI builds against the git source.
+#[patch."https://github.com/ImperialBower/pkdealer"]
+#pkdealer_proto = { path = "../pkdealer/crates/pkdealer_proto" }
 
 [[bin]]
 name = "pktui"
