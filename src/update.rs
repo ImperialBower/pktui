@@ -322,6 +322,11 @@ fn dump_play_state(app: &mut App) {
                 format!("Dump failed: {e}"),
             ),
         }
+    } else {
+        app.log.push(
+            crate::log_panel::Severity::Error,
+            "D (dump) is only available in Play mode".to_string(),
+        );
     }
 }
 

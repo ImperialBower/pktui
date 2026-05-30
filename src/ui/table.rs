@@ -135,6 +135,11 @@ fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
             let tag = position_tag(seat, btn, sb, bb)
                 .map(str::to_owned)
                 .unwrap_or_default();
+            let analysis = if folded || hole == "??" || status.board.is_empty() {
+                None
+            } else {
+                holdem_board_analysis(&hole, &status.board)
+            };
             SeatRow {
                 seat,
                 name: s.player_name.clone(),
@@ -149,6 +154,7 @@ fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
                 accent,
                 pnl: Some(s.profit_loss),
                 action: last_action_label(s.state, s.bet),
+                analysis,
             }
         })
         .collect()
@@ -244,6 +250,11 @@ struct SeatRow {
     /// Empty when the mode does not surface it (Play / Arena) or the seat has
     /// not yet acted; populated in Spectate mode from the dealer snapshot.
     action: String,
+    /// Best hand the seat can currently make from hole cards + board, formatted
+    /// as `"<sorted-cards> <HandRankClass>"` (e.g. `"A♠ A♥ K♦ Q♣ J♠ PairOfAces"`).
+    /// `None` when in Play/Arena mode, when the board is empty, or when hole
+    /// cards are hidden.
+    analysis: Option<String>,
 }
 
 fn seat_rows<F: Fn(u8) -> String>(
@@ -311,6 +322,7 @@ fn seat_rows<F: Fn(u8) -> String>(
             accent,
             pnl: None,
             action: String::new(),
+            analysis: None,
         });
     }
     out
@@ -386,6 +398,32 @@ fn pad_card_slot(s: &str) -> String {
     format!("{s:>4}")
 }
 
+/// Evaluates the best 5-card Hold'em hand reachable from the given hole cards
+/// and board, returning `"<sorted-cards> <HandRankClass>"` (e.g.
+/// `"A♠ A♥ K♦ Q♣ J♠ PairOfAces"`).
+///
+/// Dispatches on board size so the column updates at every street:
+/// - 3 board cards (flop):  2 + 3 = 5 → [`Five`]
+/// - 4 board cards (turn):  2 + 4 = 6 → [`Six`]
+/// - 5 board cards (river): 2 + 5 = 7 → [`Seven`]
+///
+/// Returns `None` when the combined card count is outside 5–7 or parsing fails.
+fn holdem_board_analysis(hole: &str, board: &str) -> Option<String> {
+    use pkcore::arrays::HandRanker;
+    use pkcore::arrays::five::Five;
+    use pkcore::arrays::six::Six;
+    use pkcore::arrays::seven::Seven;
+    use std::str::FromStr;
+    let combined = format!("{hole} {board}");
+    let (rank, hand) = match board.split_whitespace().count() {
+        3 => Five::from_str(&combined).ok()?.hand_rank_and_hand(),
+        4 => Six::from_str(&combined).ok()?.hand_rank_and_hand(),
+        5 => Seven::from_str(&combined).ok()?.hand_rank_and_hand(),
+        _ => return None,
+    };
+    Some(format!("{hand} {:?}", rank.class))
+}
+
 fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
     let header = Row::new(vec![
         Cell::from("#"),
@@ -396,6 +434,7 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         Cell::from("Action"),
         Cell::from("Pos"),
         Cell::from("P/L"),
+        Cell::from("Analysis"),
     ])
     .style(
         Style::default()
@@ -427,6 +466,8 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         Constraint::Length(13),
         Constraint::Length(8),
         Constraint::Length(10),
+        // Analysis: "A♠ A♥ K♦ Q♣ J♠ KingHighStraightFlush" ≈ 36 chars
+        Constraint::Length(38),
     ];
 
     let body: Vec<Row> = rows
@@ -470,6 +511,10 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
                     Cell::from(format!("{v:+}")).style(Style::default().fg(color))
                 }
             };
+            let analysis_cell = match &r.analysis {
+                None => Cell::from("—").style(Style::default().fg(Color::DarkGray)),
+                Some(label) => Cell::from(label.clone()).style(Style::default().fg(Color::Cyan)),
+            };
             Row::new(vec![
                 Cell::from(format!("{}", r.seat)),
                 Cell::from(r.name.clone()),
@@ -479,6 +524,7 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
                 Cell::from(r.action.clone()),
                 Cell::from(r.tag.clone()),
                 pnl_cell,
+                analysis_cell,
             ])
             .style(style)
         })
@@ -895,15 +941,17 @@ mod tests {
             accent: Accent::None,
             pnl: Some(-500),
             action: "bet 500".to_string(),
+            analysis: None,
         }];
-        let backend = TestBackend::new(120, 12);
+        let backend = TestBackend::new(160, 12);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal.draw(|f| render_seats(f, f.area(), &rows)).unwrap();
         let buffer = terminal.backend().buffer().clone();
-        let header: String = (0..120).map(|x| buffer[(x, 1)].symbol()).collect();
+        let header: String = (0..160).map(|x| buffer[(x, 1)].symbol()).collect();
         assert!(header.contains("P/L"));
         assert!(header.contains("Action"));
-        let body: String = (0..120).map(|x| buffer[(x, 2)].symbol()).collect();
+        assert!(header.contains("Analysis"));
+        let body: String = (0..160).map(|x| buffer[(x, 2)].symbol()).collect();
         assert!(body.contains("bet 500"));
     }
 
