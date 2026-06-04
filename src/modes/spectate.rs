@@ -100,6 +100,9 @@ pub struct SpectateState {
     pub conn: ConnState,
     /// When true, incoming snapshots are dropped (display freezes).
     pub paused: bool,
+    /// Snapshots of every hand that has ended this session, oldest first.
+    /// Grows unbounded; `D` dumps the whole history.
+    pub completed_hands: Vec<TableStatus>,
     /// Receiver drained each UI tick.
     rx: Receiver<SpectateMsg>,
     /// Kept alive so the worker thread is not detached prematurely.
@@ -135,6 +138,7 @@ impl SpectateState {
             config: None,
             conn: ConnState::Connecting,
             paused: false,
+            completed_hands: Vec::new(),
             rx,
             _handle: Some(handle),
         })
@@ -166,8 +170,16 @@ impl SpectateState {
                     return;
                 }
                 let ev = *ev;
+                let is_hand_end = EventType::try_from(ev.event_type) == Ok(EventType::HandEnded);
                 if let Some(status) = ev.current_status {
                     self.status = Some(status);
+                }
+                // On hand end, archive the end-of-hand snapshot — preferring
+                // the event's own status, falling back to the latest known.
+                if is_hand_end
+                    && let Some(snapshot) = self.status.clone()
+                {
+                    self.completed_hands.push(snapshot);
                 }
                 if !ev.description.is_empty() {
                     log.push(severity_for(ev.event_type), ev.description);
@@ -188,6 +200,111 @@ impl SpectateState {
         }
     }
 
+    /// Writes a YAML snapshot of the current spectator view to the working
+    /// directory. Filename: `pktui-spectate-dump-<street>-<unix_secs>.yaml`,
+    /// where `<street>` is the latest snapshot's `current_street` (or
+    /// `nostatus` before the first event arrives).
+    ///
+    /// The file has two sections: a Play-style `pktui_spectate_dump:` summary
+    /// built from the proto [`TableStatus`], and a `raw_proto:` block holding
+    /// the verbatim `{:#?}` debug rendering of the status and config — enough
+    /// for a developer to reproduce a streaming bug from a single file.
+    ///
+    /// # Errors
+    ///
+    /// Returns `std::io::Error` if the file cannot be created or written.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use pktui::modes::spectate::SpectateState;
+    /// use pktui::log_panel::LogPanel;
+    /// let state = SpectateState::new("http://localhost:50051".to_string()).unwrap();
+    /// let path = state.dump_state(&LogPanel::new()).unwrap();
+    /// println!("wrote {}", path.display());
+    /// ```
+    pub fn dump_state(&self, log: &LogPanel) -> std::io::Result<std::path::PathBuf> {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        let unix = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let street = self.status.as_ref().map_or_else(
+            || "nostatus".to_string(),
+            |s| format!("s{}", s.current_street),
+        );
+        let name = format!("pktui-spectate-dump-{street}-{unix}.yaml");
+        let path = std::path::PathBuf::from(&name);
+        std::fs::write(&path, self.render_dump_yaml(log))?;
+        Ok(path)
+    }
+
+    /// Builds the YAML body for [`Self::dump_state`].
+    fn render_dump_yaml(&self, log: &LogPanel) -> String {
+        use std::fmt::Write;
+        let mut s = String::with_capacity(4096);
+        let _ = writeln!(s, "pktui_spectate_dump:");
+        let _ = writeln!(s, "  endpoint: \"{}\"", self.endpoint);
+        let _ = writeln!(s, "  conn: {}", self.conn.label());
+        let _ = writeln!(s, "  paused: {}", self.paused);
+        let _ = writeln!(s, "  completed_hands_count: {}", self.completed_hands.len());
+        match &self.status {
+            None => {
+                let _ = writeln!(s, "  status: none");
+            }
+            Some(t) => Self::write_status_summary(&mut s, t, "  "),
+        }
+        let _ = writeln!(s, "  recent_log:");
+        let lines: Vec<&str> = log.iter().map(|l| l.text.as_str()).collect();
+        let start = lines.len().saturating_sub(40);
+        for line in &lines[start..] {
+            let escaped = line.replace('"', "\\\"");
+            let _ = writeln!(s, "    - \"{escaped}\"");
+        }
+
+        // Every hand that has ended this session, oldest first. Each entry is
+        // a list item anchored by `index`; the rest of the fields are siblings
+        // emitted by the shared summary helper at the list-item indent.
+        let _ = writeln!(s, "completed_hands:");
+        for (i, hand) in self.completed_hands.iter().enumerate() {
+            let _ = writeln!(s, "  - index: {i}");
+            Self::write_status_summary(&mut s, hand, "    ");
+        }
+
+        // Verbatim proto, indented as a YAML block scalar so the file stays
+        // valid YAML regardless of the debug output's punctuation.
+        let _ = writeln!(s, "raw_proto: |");
+        let raw = format!("status: {:#?}\nconfig: {:#?}", self.status, self.config);
+        for line in raw.lines() {
+            let _ = writeln!(s, "  {line}");
+        }
+        s
+    }
+
+    /// Writes a [`TableStatus`] summary (scalar fields + seats) into `s`, with
+    /// every key prefixed by `indent`. Shared by the live snapshot and each
+    /// archived completed hand so both render identically.
+    fn write_status_summary(s: &mut String, t: &TableStatus, indent: &str) {
+        use std::fmt::Write;
+        let _ = writeln!(s, "{indent}pot: {}", t.pot);
+        let _ = writeln!(s, "{indent}board: \"{}\"", t.board);
+        let _ = writeln!(s, "{indent}small_blind: {}", t.small_blind);
+        let _ = writeln!(s, "{indent}big_blind: {}", t.big_blind);
+        let _ = writeln!(s, "{indent}current_street: {}", t.current_street);
+        let _ = writeln!(s, "{indent}hand_in_progress: {}", t.hand_in_progress);
+        let _ = writeln!(s, "{indent}game_over: {}", t.game_over);
+        let _ = writeln!(s, "{indent}next_to_act: {}", t.next_to_act);
+        let _ = writeln!(s, "{indent}seats:");
+        for seat in &t.seats {
+            let _ = writeln!(s, "{indent}  - seat: {}", seat.seat_number);
+            let _ = writeln!(s, "{indent}    name: \"{}\"", seat.player_name);
+            let _ = writeln!(s, "{indent}    chips: {}", seat.chips);
+            let _ = writeln!(s, "{indent}    bet: {}", seat.bet);
+            let _ = writeln!(s, "{indent}    cards: \"{}\"", seat.cards);
+            let _ = writeln!(s, "{indent}    state: {}", seat.state);
+            let _ = writeln!(s, "{indent}    profit_loss: {}", seat.profit_loss);
+        }
+    }
+
     /// Test-only constructor: builds a detached state with no worker thread,
     /// returning the channel sender so tests can inject messages.
     #[cfg(test)]
@@ -200,6 +317,7 @@ impl SpectateState {
                 config: None,
                 conn: ConnState::Connecting,
                 paused: false,
+                completed_hands: Vec::new(),
                 rx,
                 _handle: None,
             },
@@ -347,6 +465,115 @@ mod tests {
         state.apply(SpectateMsg::Event(Box::new(ev)), &mut log);
         assert!(state.status.is_none());
         assert_eq!(log.len(), 0);
+    }
+
+    #[test]
+    fn hand_ended_events_accumulate_in_history() {
+        let (mut state, _tx) = SpectateState::detached("http://localhost:50051");
+        let mut log = LogPanel::new();
+        for _ in 0..2 {
+            let ev = TableEvent {
+                timestamp: 1,
+                event_type: EventType::HandEnded as i32,
+                description: "hand over".into(),
+                current_status: Some(sample_status()),
+            };
+            state.apply(SpectateMsg::Event(Box::new(ev)), &mut log);
+        }
+        assert_eq!(state.completed_hands.len(), 2);
+
+        let path = state.dump_state(&log).expect("dump should succeed");
+        let body = std::fs::read_to_string(&path).expect("dump file should be readable");
+        let _ = std::fs::remove_file(&path);
+        assert!(body.contains("completed_hands_count: 2"));
+        assert!(body.contains("completed_hands:"));
+    }
+
+    #[test]
+    fn hand_ended_without_status_falls_back_to_last_snapshot() {
+        let (mut state, _tx) = SpectateState::detached("http://localhost:50051");
+        let mut log = LogPanel::new();
+        // A normal event first establishes a snapshot.
+        state.apply(
+            SpectateMsg::Event(Box::new(TableEvent {
+                timestamp: 1,
+                event_type: EventType::PlayerAction as i32,
+                description: "gto calls 500".into(),
+                current_status: Some(sample_status()),
+            })),
+            &mut log,
+        );
+        // HandEnded carrying no status of its own.
+        state.apply(
+            SpectateMsg::Event(Box::new(TableEvent {
+                timestamp: 2,
+                event_type: EventType::HandEnded as i32,
+                description: "hand over".into(),
+                current_status: None,
+            })),
+            &mut log,
+        );
+        assert_eq!(state.completed_hands.len(), 1);
+        assert_eq!(state.completed_hands[0].pot, 1_000);
+    }
+
+    #[test]
+    fn non_hand_ended_events_do_not_grow_history() {
+        let (mut state, _tx) = SpectateState::detached("http://localhost:50051");
+        let mut log = LogPanel::new();
+        state.apply(
+            SpectateMsg::Event(Box::new(TableEvent {
+                timestamp: 1,
+                event_type: EventType::PlayerAction as i32,
+                description: "gto calls 500".into(),
+                current_status: Some(sample_status()),
+            })),
+            &mut log,
+        );
+        assert!(state.completed_hands.is_empty());
+    }
+
+    #[test]
+    fn dump_state_writes_both_sections() {
+        let (mut state, _tx) = SpectateState::detached("http://localhost:50051");
+        let mut log = LogPanel::new();
+        let ev = TableEvent {
+            timestamp: 1,
+            event_type: 4,
+            description: "gto calls 500".into(),
+            current_status: Some(sample_status()),
+        };
+        state.apply(SpectateMsg::Event(Box::new(ev)), &mut log);
+
+        let path = state.dump_state(&log).expect("dump should succeed");
+        let body = std::fs::read_to_string(&path).expect("dump file should be readable");
+        let _ = std::fs::remove_file(&path);
+
+        assert!(
+            body.contains("pktui_spectate_dump:"),
+            "missing summary section"
+        );
+        assert!(body.contains("raw_proto:"), "missing raw proto section");
+        assert!(body.contains("pot: 1000"), "summary should carry the pot");
+        assert!(body.contains("gto"), "summary should carry the seat name");
+    }
+
+    #[test]
+    fn dump_state_handles_missing_status() {
+        let (state, _tx) = SpectateState::detached("http://localhost:50051");
+        let log = LogPanel::new();
+
+        let path = state
+            .dump_state(&log)
+            .expect("dump should succeed without a snapshot");
+        let body = std::fs::read_to_string(&path).expect("dump file should be readable");
+        let _ = std::fs::remove_file(&path);
+
+        assert!(body.contains("pktui_spectate_dump:"));
+        assert!(
+            body.contains("status: none"),
+            "should note the absent snapshot"
+        );
     }
 
     #[test]

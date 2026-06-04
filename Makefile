@@ -1,4 +1,4 @@
-.PHONY: default help clean build test build_test fmt clippy update tree tree-duplicates deny audit unused-deps create_docs docs install-tools watch install-watch ayce
+.PHONY: default help clean build test build_test fmt clippy update tree tree-duplicates deny audit unused-deps create_docs docs install-tools watch install-watch ayce spectate
 
 CRATE_NAME := $(shell grep '^name' Cargo.toml 2>/dev/null | head -1 | sed 's/.*"\(.*\)".*/\1/' | tr '-' '_')
 
@@ -15,6 +15,9 @@ help:
 	@echo "  make build_test      - Clean once, then build and test"
 	@echo "  make clean           - Clean build artifacts"
 	@echo "  make ayce            - Run all checks (fmt -> build_test -> clippy -> deny -> create_docs)"
+	@echo ""
+	@echo "Run:"
+	@echo "  make spectate        - Run the spectate command (release build)"
 	@echo ""
 	@echo "Code Quality & Security:"
 	@echo "  make fmt             - Format code"
@@ -49,6 +52,10 @@ build:
 # Run tests
 test:
 	cargo test
+
+# Run the spectate command (release build)
+spectate:
+	cargo run --release -- spectate
 
 # Clean once, then run build + test
 build_test: clean build test
