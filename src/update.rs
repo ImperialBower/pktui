@@ -208,7 +208,7 @@ pub fn update(app: &mut App, msg: Msg) -> Result<()> {
     match msg {
         Msg::Quit => app.quit(),
         Msg::ToggleHelp => app.toggle_help(),
-        Msg::Dump => dump_play_state(app),
+        Msg::Dump => dump_current_state(app),
         Msg::Noop => {}
         Msg::Tick => match &mut app.mode {
             AppMode::Play(p) => {
@@ -310,23 +310,27 @@ pub fn update(app: &mut App, msg: Msg) -> Result<()> {
     Ok(())
 }
 
-fn dump_play_state(app: &mut App) {
-    if let AppMode::Play(p) = &app.mode {
-        match p.dump_state(&app.log) {
-            Ok(path) => app.log.push(
-                crate::log_panel::Severity::Info,
-                format!("Dumped state to {}", path.display()),
-            ),
-            Err(e) => app.log.push(
-                crate::log_panel::Severity::Error,
-                format!("Dump failed: {e}"),
-            ),
-        }
-    } else {
-        app.log.push(
+fn dump_current_state(app: &mut App) {
+    // Play and Spectate each own a different state model, so they have their
+    // own `dump_state`; Arena/Replay have nothing dump-worthy yet.
+    let result = match &app.mode {
+        AppMode::Play(p) => Some(p.dump_state(&app.log)),
+        AppMode::Spectate(s) => Some(s.dump_state(&app.log)),
+        AppMode::Arena(_) | AppMode::Replay(_) => None,
+    };
+    match result {
+        Some(Ok(path)) => app.log.push(
+            crate::log_panel::Severity::Info,
+            format!("Dumped state to {}", path.display()),
+        ),
+        Some(Err(e)) => app.log.push(
             crate::log_panel::Severity::Error,
-            "D (dump) is only available in Play mode".to_string(),
-        );
+            format!("Dump failed: {e}"),
+        ),
+        None => app.log.push(
+            crate::log_panel::Severity::Error,
+            "D (dump) is only available in Play and Spectate mode".to_string(),
+        ),
     }
 }
 
