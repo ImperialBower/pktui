@@ -176,9 +176,7 @@ impl SpectateState {
                 }
                 // On hand end, archive the end-of-hand snapshot — preferring
                 // the event's own status, falling back to the latest known.
-                if is_hand_end
-                    && let Some(snapshot) = self.status.clone()
-                {
+                if is_hand_end && let Some(snapshot) = self.status.clone() {
                     self.completed_hands.push(snapshot);
                 }
                 if !ev.description.is_empty() {
@@ -482,9 +480,10 @@ mod tests {
         }
         assert_eq!(state.completed_hands.len(), 2);
 
-        let path = state.dump_state(&log).expect("dump should succeed");
-        let body = std::fs::read_to_string(&path).expect("dump file should be readable");
-        let _ = std::fs::remove_file(&path);
+        // Assert on the rendered body, not a written file: dump_state's
+        // filename is time+street keyed, so two parallel tests sharing a
+        // street would race on the same path. render_dump_yaml is pure.
+        let body = state.render_dump_yaml(&log);
         assert!(body.contains("completed_hands_count: 2"));
         assert!(body.contains("completed_hands:"));
     }
@@ -534,7 +533,7 @@ mod tests {
     }
 
     #[test]
-    fn dump_state_writes_both_sections() {
+    fn render_dump_includes_both_sections() {
         let (mut state, _tx) = SpectateState::detached("http://localhost:50051");
         let mut log = LogPanel::new();
         let ev = TableEvent {
@@ -545,9 +544,8 @@ mod tests {
         };
         state.apply(SpectateMsg::Event(Box::new(ev)), &mut log);
 
-        let path = state.dump_state(&log).expect("dump should succeed");
-        let body = std::fs::read_to_string(&path).expect("dump file should be readable");
-        let _ = std::fs::remove_file(&path);
+        // Pure renderer — no filesystem, so no cross-test path race.
+        let body = state.render_dump_yaml(&log);
 
         assert!(
             body.contains("pktui_spectate_dump:"),
