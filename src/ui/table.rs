@@ -444,6 +444,7 @@ fn micro_usd_to_dollars(micro: u64) -> f64 {
     micro as f64 / 1_000_000.0
 }
 
+#[allow(clippy::too_many_lines)]
 fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
     let header = Row::new(vec![
         Cell::from("#"),
