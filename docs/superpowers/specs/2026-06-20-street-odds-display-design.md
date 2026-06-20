@@ -105,17 +105,25 @@ rule is applied uniformly; for preflop this already matches `DealEval`'s own
 - Unit: river is deterministic — winner `equity == 1.0`, loser `0.0`; a board
   that chops yields `0.5 / 0.5` with `tie == 1.0`.
 - Unit: board-card-count dispatch picks the right eval (1/2 board cards error).
-- Version bump to `0.1.8` + CHANGELOG entry. **No `cargo publish`.**
+- Version bump to `0.1.8` + CHANGELOG entry.
+
+### ⛔ Handoff gate after pkcore
+
+When the pkcore work above is complete (API + tests green + version bump +
+CHANGELOG), **stop and notify the user.** The user publishes `pkcore 0.1.8` to
+crates.io themselves — Claude never runs `cargo publish`. pktui work does not
+begin until the published crate is available.
 
 ## pktui changes
 
 ### Dependency
 
-- `Cargo.toml`: bump `pkcore` from `0.1.1` to `0.1.8`; add `"equity"` to the
-  feature list (`["bot-profiles", "hand-histories", "equity"]`). Un-comment the
-  `[patch.crates-io] pkcore = { path = "../pkcore" }` block while iterating
-  locally (re-comment before committing, per the existing convention in the
-  file).
+- `Cargo.toml`: bump `pkcore` from `0.1.1` to `0.1.8` (which the user will have
+  published to crates.io after the pkcore handoff gate); add `"equity"` to the
+  feature list (`["bot-profiles", "hand-histories", "equity"]`). The
+  `[patch.crates-io] pkcore = { path = "../pkcore" }` block may be un-commented
+  for local iteration but is unnecessary once 0.1.8 is published; re-comment
+  before committing, per the existing convention in the file.
 
 ### New module: `src/ui/odds.rs`
 
@@ -185,7 +193,8 @@ parallel (`mpsc`) and turn/river are trivial (44 cases / 1 case).
 ## Build sequence
 
 1. pkcore: `StreetEquity` + `Game::street_equities()` + tests + 0.1.8 bump.
-2. pktui: dependency bump + `src/ui/odds.rs` (`OddsCache`) + tests.
+   **→ stop here; user publishes pkcore 0.1.8 to crates.io.**
+2. pktui: dependency bump (to published 0.1.8) + `src/ui/odds.rs` (`OddsCache`) + tests.
 3. pktui: `Win%` column in `table.rs` + Arena wiring + tests.
 4. pktui: Spectate wiring + tests.
 5. pktui: Replay wiring + tests.
