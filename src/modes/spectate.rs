@@ -409,6 +409,7 @@ mod tests {
                 chips_in_play: 500,
                 profit_loss: -500,
                 bet: 500,
+                ..Default::default()
             }],
             board: "Ah Kd Qc".into(),
             pot: 1_000,

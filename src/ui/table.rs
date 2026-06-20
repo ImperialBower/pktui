@@ -155,6 +155,8 @@ fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
                 pnl: Some(s.profit_loss),
                 action: last_action_label(s.state, s.bet),
                 analysis,
+                tokens: Some((s.input_tokens, s.output_tokens)),
+                cost_micro_usd: Some(s.cost_micro_usd),
             }
         })
         .collect()
@@ -256,6 +258,13 @@ struct SeatRow {
     /// `None` when in Play/Arena mode, when the board is empty, or when hole
     /// cards are hidden.
     analysis: Option<String>,
+    /// Cumulative LLM token usage `(input, output)` this session (EPIC-44).
+    /// `None` when the mode does not track it (Play / Arena); `Some((0, 0))` for
+    /// a non-LLM seat (rule/random bot) in Spectate mode.
+    tokens: Option<(u64, u64)>,
+    /// Notional cost in integer micro-USD (1e-6 USD) of this seat's tokens
+    /// (EPIC-44). `None` in Play / Arena; `Some(0)` when unpriced or a bot.
+    cost_micro_usd: Option<u64>,
 }
 
 fn seat_rows<F: Fn(u8) -> String>(
@@ -324,6 +333,8 @@ fn seat_rows<F: Fn(u8) -> String>(
             pnl: None,
             action: String::new(),
             analysis: None,
+            tokens: None,
+            cost_micro_usd: None,
         });
     }
     out
@@ -425,6 +436,14 @@ fn holdem_board_analysis(hole: &str, board: &str) -> Option<String> {
     Some(format!("{hand} {:?}", rank.class))
 }
 
+/// Converts integer micro-USD (1e-6 USD) to a floating-point dollar figure for
+/// display. Cost values are small (single dollars), well within `f64`'s exact
+/// integer range, so the precision loss is immaterial.
+#[allow(clippy::cast_precision_loss)]
+fn micro_usd_to_dollars(micro: u64) -> f64 {
+    micro as f64 / 1_000_000.0
+}
+
 fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
     let header = Row::new(vec![
         Cell::from("#"),
@@ -435,6 +454,8 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         Cell::from("Action"),
         Cell::from("Pos"),
         Cell::from("P/L"),
+        Cell::from("Tokens"),
+        Cell::from("Cost$"),
         Cell::from("Analysis"),
     ])
     .style(
@@ -467,6 +488,10 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         Constraint::Length(13),
         Constraint::Length(8),
         Constraint::Length(10),
+        // Tokens "999999/9999" (cumulative input/output).
+        Constraint::Length(12),
+        // Cost$ "$0.0234" (notional micro-USD / 1e6).
+        Constraint::Length(9),
         // Analysis: "A♠ A♥ K♦ Q♣ J♠ KingHighStraightFlush" ≈ 36 chars
         Constraint::Length(38),
     ];
@@ -516,6 +541,19 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
                 None => Cell::from("—").style(Style::default().fg(Color::DarkGray)),
                 Some(label) => Cell::from(label.clone()).style(Style::default().fg(Color::Cyan)),
             };
+            // Token/cost cells: "—" when the mode doesn't track them (Play/Arena),
+            // blank for a non-LLM seat (bot, zero tokens/cost), else the value.
+            let tokens_cell = match r.tokens {
+                None => Cell::from("—").style(Style::default().fg(Color::DarkGray)),
+                Some((0, 0)) => Cell::from(""),
+                Some((input, output)) => Cell::from(format!("{input}/{output}")),
+            };
+            let cost_cell = match r.cost_micro_usd {
+                None => Cell::from("—").style(Style::default().fg(Color::DarkGray)),
+                Some(0) => Cell::from(""),
+                Some(v) => Cell::from(format!("${:.4}", micro_usd_to_dollars(v)))
+                    .style(Style::default().fg(Color::Green)),
+            };
             Row::new(vec![
                 Cell::from(format!("{}", r.seat)),
                 Cell::from(r.name.clone()),
@@ -525,6 +563,8 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
                 Cell::from(r.action.clone()),
                 Cell::from(r.tag.clone()),
                 pnl_cell,
+                tokens_cell,
+                cost_cell,
                 analysis_cell,
             ])
             .style(style)
@@ -944,6 +984,8 @@ mod tests {
             pnl: Some(-500),
             action: "bet 500".to_string(),
             analysis: None,
+            tokens: Some((1200, 8)),
+            cost_micro_usd: Some(23_400),
         }];
         let backend = TestBackend::new(160, 12);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -953,8 +995,12 @@ mod tests {
         assert!(header.contains("P/L"));
         assert!(header.contains("Action"));
         assert!(header.contains("Analysis"));
+        assert!(header.contains("Tokens"));
+        assert!(header.contains("Cost$"));
         let body: String = (0..160).map(|x| buffer[(x, 2)].symbol()).collect();
         assert!(body.contains("bet 500"));
+        assert!(body.contains("1200/8"), "tokens column: {body}");
+        assert!(body.contains("$0.0234"), "cost column: {body}");
     }
 
     #[test]
@@ -973,6 +1019,7 @@ mod tests {
                     chips_in_play: 500,
                     profit_loss: -500,
                     bet: 500,
+                    ..Default::default()
                 },
                 SeatInfo {
                     seat_number: 1,
@@ -984,6 +1031,7 @@ mod tests {
                     chips_in_play: 0,
                     profit_loss: -10_000,
                     bet: 0,
+                    ..Default::default()
                 },
             ],
             board: "Ah Kd Qc".into(),
@@ -1007,6 +1055,9 @@ mod tests {
         assert!(!rows[0].folded);
         assert!(rows[1].folded); // FOLDED state
         assert_eq!(rows[1].accent, Accent::None);
+        // Spectate mode populates token/cost (Some), unlike Play/Arena (None).
+        assert_eq!(rows[0].tokens, Some((0, 0)));
+        assert_eq!(rows[0].cost_micro_usd, Some(0));
     }
 
     #[test]
@@ -1047,6 +1098,7 @@ mod tests {
                     chips_in_play: 500,
                     profit_loss: -500,
                     bet: 500,
+                    ..Default::default()
                 },
                 SeatInfo {
                     seat_number: 1,
@@ -1058,6 +1110,7 @@ mod tests {
                     chips_in_play: 0,
                     profit_loss: -10_000,
                     bet: 0,
+                    ..Default::default()
                 },
             ],
             board: "Qc Jc Tc".into(),
@@ -1120,6 +1173,7 @@ mod tests {
                 chips_in_play: 500,
                 profit_loss: -500,
                 bet: 500,
+                ..Default::default()
             }],
             board: "Ah Kd Qc".into(),
             pot: 1_000,
@@ -1153,6 +1207,7 @@ mod tests {
                 chips_in_play: 0,
                 profit_loss: -9_000,
                 bet: 0,
+                ..Default::default()
             }],
             board: String::new(),
             pot: 0,
