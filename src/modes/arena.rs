@@ -54,6 +54,12 @@ pub struct ArenaState {
     pub speed: Duration,
     /// Resolved RNG seed.
     pub seed: u64,
+    /// Per-street odds cache for the Win% column.
+    pub odds: crate::ui::odds::OddsCache,
+    /// When `true`, auto-advance is suspended so spectators can study the
+    /// current hands and odds; the spectator advances one action at a time
+    /// via [`Self::step`].
+    pub paused: bool,
 }
 
 /// Mirrors `play::build_table` for arena's args struct.
@@ -175,6 +181,8 @@ impl ArenaState {
                 .unwrap_or_else(Instant::now),
             speed: Duration::from_millis(args.speed_ms),
             seed,
+            odds: crate::ui::odds::OddsCache::new(),
+            paused: false,
         })
     }
 
@@ -240,7 +248,33 @@ impl ArenaState {
         self.speed = Duration::from_millis((ms + 100).min(5000));
     }
 
+    /// Toggles the paused state.
+    ///
+    /// While paused, [`Self::tick`] stops auto-advancing so spectators can
+    /// read each seat's hand and odds; they advance manually with
+    /// [`Self::step`].
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::cli::ArenaArgs;
+    /// use pktui::log_panel::LogPanel;
+    /// use pktui::modes::ArenaState;
+    ///
+    /// let mut log = LogPanel::new();
+    /// let mut s = ArenaState::new(&ArenaArgs::default(), &mut log).unwrap();
+    /// assert!(!s.paused);
+    /// s.toggle_pause();
+    /// assert!(s.paused);
+    /// ```
+    pub fn toggle_pause(&mut self) {
+        self.paused = !self.paused;
+    }
+
     /// Drives the arena forward by one step (paced by [`Self::speed`]).
+    ///
+    /// No-op while [`Self::paused`] is set — a paused arena advances only via
+    /// [`Self::step`].
     ///
     /// # Errors
     ///
@@ -249,10 +283,38 @@ impl ArenaState {
         if matches!(self.phase, ArenaPhase::SessionOver) {
             return Ok(false);
         }
+        if self.paused {
+            return Ok(false);
+        }
         if self.last_step_at.elapsed() < self.speed {
             return Ok(false);
         }
+        self.step_once(log)
+    }
 
+    /// Manually advances exactly one step while paused, ignoring the speed
+    /// gate. Lets a spectator step through a hand one action at a time. No-op
+    /// once the session is over.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Engine`] on any pkcore failure.
+    pub fn step(&mut self, log: &mut LogPanel) -> Result<bool> {
+        if matches!(self.phase, ArenaPhase::SessionOver) {
+            return Ok(false);
+        }
+        self.step_once(log)
+    }
+
+    /// Performs a single arena step: deal the next hand if one just finished,
+    /// otherwise apply the next bot action / street advance. Shared by the
+    /// timed [`Self::tick`] and the manual [`Self::step`]; it neither checks
+    /// [`Self::paused`] nor the speed gate.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::Engine`] on any pkcore failure.
+    fn step_once(&mut self, log: &mut LogPanel) -> Result<bool> {
         if matches!(self.phase, ArenaPhase::HandComplete) {
             self.session.start_hand()?;
             log.push(
@@ -380,6 +442,46 @@ mod tests {
             .map(|b| b.name.clone())
             .collect();
         assert_eq!(a, b);
+    }
+
+    #[test]
+    fn toggle_pause_flips() {
+        let mut s = arena_with_seed(3);
+        assert!(!s.paused);
+        s.toggle_pause();
+        assert!(s.paused);
+        s.toggle_pause();
+        assert!(!s.paused);
+    }
+
+    #[test]
+    fn paused_tick_does_not_advance() {
+        let mut s = arena_with_seed(11);
+        let mut log = LogPanel::new();
+        // Zero delay means an un-paused tick would always advance.
+        s.speed = Duration::from_millis(0);
+        s.paused = true;
+        // Even across many ticks, a paused arena never advances.
+        for _ in 0..50 {
+            assert!(!s.tick(&mut log).unwrap());
+        }
+    }
+
+    #[test]
+    fn step_advances_while_paused() {
+        let mut s = arena_with_seed(11);
+        let mut log = LogPanel::new();
+        // Long delay so a timed tick could never fire — only step can advance.
+        s.speed = Duration::from_secs(3600);
+        s.paused = true;
+        assert!(
+            !s.tick(&mut log).unwrap(),
+            "tick must not advance while paused"
+        );
+        assert!(
+            s.step(&mut log).unwrap(),
+            "step must advance one action while paused"
+        );
     }
 
     #[test]

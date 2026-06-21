@@ -30,11 +30,20 @@ pub fn render(state: &ReplayState, frame: &mut Frame, area: Rect) {
         .constraints([Constraint::Length(7), Constraint::Min(4)])
         .split(area);
 
-    render_header(hand, state.street_index, frame, chunks[0]);
+    let holes = replay_holes(hand);
+    let board = replay_board(hand, state.street_index);
+    let eq = state.odds.equities(&holes, &board);
+    render_header(hand, state.street_index, &eq, frame, chunks[0]);
     render_street(hand, state.street_index, frame, chunks[1]);
 }
 
-fn render_header(hand: &HandHistory, street: usize, frame: &mut Frame, area: Rect) {
+fn render_header(
+    hand: &HandHistory,
+    street: usize,
+    eq: &[(u8, f64)],
+    frame: &mut Frame,
+    area: Rect,
+) {
     let btn = hand
         .table
         .button
@@ -64,15 +73,19 @@ fn render_header(hand: &HandHistory, street: usize, frame: &mut Frame, area: Rec
             ),
         ]),
         Line::raw(""),
-        Line::raw("seat  name                    stack  hole"),
+        Line::raw("seat  name                    stack  hole            win%"),
     ];
     for p in &hand.players {
         let hole = p
             .hole_cards
             .as_deref()
             .map_or_else(|| "??".to_string(), crate::ui::sort_hole_cards);
+        let win = eq.iter().find(|(s, _)| *s == p.seat).map_or_else(
+            || "  —".to_string(),
+            |(_, e)| format!("  {:.1}%", e * 100.0),
+        );
         lines.push(Line::raw(format!(
-            "{:>4}  {:<22}  {:>5}  {}",
+            "{:>4}  {:<22}  {:>5}  {:<14}{win}",
             p.seat,
             p.name,
             chips(p.stack),
@@ -227,6 +240,51 @@ fn format_action(a: &Action, hand: &HandHistory) -> String {
     format!("  {name:<22}  {verb}")
 }
 
+/// Returns `(seat, "card card")` for every player with exactly two recorded
+/// hole cards. Players with no hole cards or non-Hold'em hand sizes are
+/// silently skipped.
+fn replay_holes(hand: &HandHistory) -> Vec<(u8, String)> {
+    hand.players
+        .iter()
+        .filter_map(|p| {
+            let cards = p.hole_cards.as_deref()?;
+            if cards.split_whitespace().count() != 2 {
+                return None;
+            }
+            Some((p.seat, cards.to_string()))
+        })
+        .collect()
+}
+
+/// Returns the community board string visible at `street`.
+///
+/// - 0 (preflop) → `""`
+/// - 1 (flop)    → flop cards (e.g. `"Ah Kd Qc"`)
+/// - 2 (turn)    → flop + turn card (e.g. `"Ah Kd Qc 2s"`)
+/// - 3+ (river)  → flop + turn + river card (e.g. `"Ah Kd Qc 2s 7h"`)
+fn replay_board(hand: &HandHistory, street: usize) -> String {
+    let Some(streets) = hand.streets.as_ref() else {
+        return String::new();
+    };
+    let mut parts: Vec<String> = Vec::new();
+    if street >= 1
+        && let Some(f) = streets.flop.as_ref()
+    {
+        parts.push(f.cards.clone());
+    }
+    if street >= 2
+        && let Some(t) = streets.turn.as_ref()
+    {
+        parts.push(t.card.clone());
+    }
+    if street >= 3
+        && let Some(r) = streets.river.as_ref()
+    {
+        parts.push(r.card.clone());
+    }
+    parts.join(" ").trim().to_string()
+}
+
 /// pkcore's hand-history YAML stores chip amounts as `f64` (to allow
 /// fractional chips in future variants); in practice every value is a
 /// non-negative integer. This helper performs the lossy cast in one place
@@ -264,6 +322,109 @@ fn street_label(s: usize) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── HandHistory fixture ──────────────────────────────────────────────────
+
+    fn sample_hand() -> pkcore::hand_history::HandHistory {
+        use pkcore::hand_history::{
+            FlopStreet, HandHistory, HandMeta, HandVariant, PlayerEntry, PreflopStreet,
+            RiverStreet, Stakes, Streets, TableInfo, TurnStreet,
+        };
+        HandHistory {
+            pkcore_version: None,
+            format_version: 1,
+            hand: HandMeta {
+                id: "test-replay-001".to_string(),
+                game: HandVariant::Holdem,
+                timestamp: None,
+                source: None,
+                description: None,
+            },
+            table: TableInfo {
+                name: None,
+                seats: Some(2),
+                button: Some(0),
+                stakes: Stakes {
+                    small_blind: 5.0,
+                    big_blind: 10.0,
+                    ante: None,
+                    straddle: None,
+                    bring_in: None,
+                },
+                betting_structure: Default::default(),
+            },
+            players: vec![
+                PlayerEntry {
+                    seat: 0,
+                    name: "Alice".to_string(),
+                    stack: 1000.0,
+                    player_id: None,
+                    hole_cards: Some("Ts 9s".to_string()),
+                    posted: None,
+                    hole_cards_visibility: None,
+                    withdrawn: None,
+                },
+                PlayerEntry {
+                    seat: 1,
+                    name: "Bob".to_string(),
+                    stack: 1000.0,
+                    player_id: None,
+                    hole_cards: Some("8d 7d".to_string()),
+                    posted: None,
+                    hole_cards_visibility: None,
+                    withdrawn: None,
+                },
+            ],
+            board: None,
+            streets: Some(Streets {
+                preflop: Some(PreflopStreet {
+                    actions: vec![],
+                    pot: None,
+                }),
+                flop: Some(FlopStreet {
+                    cards: "Ah Kd Qc".to_string(),
+                    actions: vec![],
+                    pot: None,
+                }),
+                turn: Some(TurnStreet {
+                    card: "2s".to_string(),
+                    actions: vec![],
+                    pot: None,
+                }),
+                river: Some(RiverStreet {
+                    card: "7h".to_string(),
+                    actions: vec![],
+                    pot: None,
+                }),
+            }),
+            results: None,
+            analysis: None,
+            shuffled_deck: None,
+        }
+    }
+
+    // ── replay_board tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn replay_board_accumulates_per_street() {
+        let hh = sample_hand();
+        assert_eq!(replay_board(&hh, 0), "");
+        assert_eq!(replay_board(&hh, 1), "Ah Kd Qc");
+        assert_eq!(replay_board(&hh, 2), "Ah Kd Qc 2s");
+        assert_eq!(replay_board(&hh, 3), "Ah Kd Qc 2s 7h");
+    }
+
+    // ── replay_holes tests ───────────────────────────────────────────────────
+
+    #[test]
+    fn replay_holes_collects_recorded_hands() {
+        let hh = sample_hand();
+        let holes = replay_holes(&hh);
+        assert_eq!(holes.len(), 2);
+        assert!(holes.iter().all(|(_, c)| c.split_whitespace().count() == 2));
+    }
+
+    // ── existing tests ───────────────────────────────────────────────────────
 
     #[test]
     fn street_name_table() {

@@ -56,6 +56,10 @@ pub enum Msg {
     ArenaFaster,
     /// Arena: slow down bots.
     ArenaSlower,
+    /// Arena: pause/resume auto-advance so spectators can study the hands.
+    ArenaTogglePause,
+    /// Arena: advance one action while paused.
+    ArenaStep,
     /// Replay: cursor moves.
     ReplayNextHand,
     /// Replay: previous hand.
@@ -152,10 +156,12 @@ fn play_key(awaiting: Awaiting, key: &KeyEvent) -> Msg {
 }
 
 fn arena_key(key: &KeyEvent) -> Msg {
-    use KeyCode::Char;
+    use KeyCode::{Char, Enter, Right};
     match key.code {
         Char('+' | '=') => Msg::ArenaFaster,
         Char('-' | '_') => Msg::ArenaSlower,
+        Char(' ') => Msg::ArenaTogglePause,
+        Right | Enter => Msg::ArenaStep,
         _ => Msg::Noop,
     }
 }
@@ -279,6 +285,21 @@ pub fn update(app: &mut App, msg: Msg) -> Result<()> {
         Msg::ArenaSlower => {
             if let AppMode::Arena(a) = &mut app.mode {
                 a.speed_down();
+            }
+        }
+        Msg::ArenaTogglePause => {
+            if let AppMode::Arena(a) = &mut app.mode {
+                a.toggle_pause();
+                let state = if a.paused { "paused" } else { "resumed" };
+                app.log
+                    .push(crate::log_panel::Severity::Info, format!("Arena {state}"));
+            }
+        }
+        Msg::ArenaStep => {
+            if let AppMode::Arena(a) = &mut app.mode
+                && a.paused
+            {
+                let _ = a.step(&mut app.log);
             }
         }
         Msg::ReplayNextHand => {
@@ -430,6 +451,34 @@ mod tests {
         let m = event_to_msg(&app, &Event::Key(k));
         assert!(matches!(m, Msg::ArenaFaster));
         update(&mut app, m).unwrap();
+    }
+
+    #[test]
+    fn arena_space_toggles_pause_and_resume() {
+        let mut app = App::arena_default().unwrap();
+        let k = KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE);
+        let m = event_to_msg(&app, &Event::Key(k));
+        assert!(matches!(m, Msg::ArenaTogglePause));
+        update(&mut app, m).unwrap();
+        if let AppMode::Arena(a) = &app.mode {
+            assert!(a.paused, "Space should pause the arena");
+        } else {
+            panic!("expected Arena mode");
+        }
+        // Toggling again resumes.
+        let m2 = event_to_msg(&app, &Event::Key(k));
+        update(&mut app, m2).unwrap();
+        if let AppMode::Arena(a) = &app.mode {
+            assert!(!a.paused, "Space again should resume the arena");
+        }
+    }
+
+    #[test]
+    fn arena_right_arrow_maps_to_step() {
+        let app = App::arena_default().unwrap();
+        let k = KeyEvent::new(KeyCode::Right, KeyModifiers::NONE);
+        let m = event_to_msg(&app, &Event::Key(k));
+        assert!(matches!(m, Msg::ArenaStep));
     }
 
     #[test]
