@@ -415,7 +415,7 @@ fn is_revealed_cards(cards: &str) -> bool {
 /// the line does not start with `"Seat "` followed by digits.
 fn parse_seat_prefix(desc: &str) -> Option<u32> {
     let rest = desc.strip_prefix("Seat ")?;
-    let digits: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
     digits.parse().ok()
 }
 
