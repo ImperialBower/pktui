@@ -973,6 +973,7 @@ mod tests {
                     chips_in_play: 500,
                     profit_loss: -500,
                     bet: 500,
+                    ..Default::default()
                 },
                 SeatInfo {
                     seat_number: 1,
@@ -984,6 +985,7 @@ mod tests {
                     chips_in_play: 0,
                     profit_loss: -10_000,
                     bet: 0,
+                    ..Default::default()
                 },
             ],
             board: "Ah Kd Qc".into(),
@@ -1047,6 +1049,7 @@ mod tests {
                     chips_in_play: 500,
                     profit_loss: -500,
                     bet: 500,
+                    ..Default::default()
                 },
                 SeatInfo {
                     seat_number: 1,
@@ -1058,6 +1061,7 @@ mod tests {
                     chips_in_play: 0,
                     profit_loss: -10_000,
                     bet: 0,
+                    ..Default::default()
                 },
             ],
             board: "Qc Jc Tc".into(),
@@ -1120,6 +1124,7 @@ mod tests {
                 chips_in_play: 500,
                 profit_loss: -500,
                 bet: 500,
+                ..Default::default()
             }],
             board: "Ah Kd Qc".into(),
             pot: 1_000,
@@ -1153,6 +1158,7 @@ mod tests {
                 chips_in_play: 0,
                 profit_loss: -9_000,
                 bet: 0,
+                ..Default::default()
             }],
             board: String::new(),
             pot: 0,
