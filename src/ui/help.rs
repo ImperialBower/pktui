@@ -34,6 +34,7 @@ pub fn render_overlay(frame: &mut Frame, area: Rect) {
         Line::raw(""),
         Line::raw("Arena"),
         Line::raw("  + faster   - slower"),
+        Line::raw("  Space  pause/resume   →/Enter  step one action (while paused)"),
         Line::raw(""),
         Line::raw("Replay"),
         Line::raw("  n / p   next/prev street"),

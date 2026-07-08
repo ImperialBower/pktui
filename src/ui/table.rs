@@ -54,7 +54,7 @@ pub fn render_table_view_play(state: &PlayState, frame: &mut Frame, area: Rect) 
         reveal_at_showdown,
         |seat| state.seat_name(seat),
     );
-    render_board(&state.session.table, frame, chunks[0]);
+    render_board(&state.session.table, false, frame, chunks[0]);
     render_seats(frame, chunks[1], &rows);
 }
 
@@ -71,10 +71,17 @@ pub fn render_table_view_arena(state: &ArenaState, frame: &mut Frame, area: Rect
     } else {
         None
     };
-    let rows = seat_rows(&state.session.table, None, active_seat, None, |seat| {
+    let mut rows = seat_rows(&state.session.table, None, active_seat, None, |seat| {
         state.seat_name(seat)
     });
-    render_board(&state.session.table, frame, chunks[0]);
+    let holes = active_holes(&state.session.table);
+    apply_odds(
+        &mut rows,
+        &holes,
+        &state.session.table.board.to_string(),
+        &state.odds,
+    );
+    render_board(&state.session.table, state.paused, frame, chunks[0]);
     render_seats(frame, chunks[1], &rows);
 }
 
@@ -95,7 +102,9 @@ pub fn render_table_view_spectate(state: &SpectateState, frame: &mut Frame, area
             frame,
             chunks[0],
         );
-        let rows = status_to_rows(status);
+        let mut rows = status_to_rows(status);
+        let holes = status_active_holes(status);
+        apply_odds(&mut rows, &holes, &status.board, &state.odds);
         render_seats(frame, chunks[1], &rows);
     } else {
         render_board_str("", 0, Street::Unspecified as i32, frame, chunks[0]);
@@ -155,6 +164,9 @@ fn status_to_rows(status: &TableStatus) -> Vec<SeatRow> {
                 pnl: Some(s.profit_loss),
                 action: last_action_label(s.state, s.bet),
                 analysis,
+                tokens: Some((s.input_tokens, s.output_tokens)),
+                cost_micro_usd: Some(s.cost_micro_usd),
+                odds: None,
             }
         })
         .collect()
@@ -256,6 +268,17 @@ struct SeatRow {
     /// `None` when in Play/Arena mode, when the board is empty, or when hole
     /// cards are hidden.
     analysis: Option<String>,
+    /// Cumulative LLM token usage `(input, output)` this session (EPIC-44).
+    /// `None` when the mode does not track it (Play / Arena); `Some((0, 0))` for
+    /// a non-LLM seat (rule/random bot) in Spectate mode.
+    tokens: Option<(u64, u64)>,
+    /// Notional cost in integer micro-USD (1e-6 USD) of this seat's tokens
+    /// (EPIC-44). `None` in Play / Arena; `Some(0)` when unpriced or a bot.
+    cost_micro_usd: Option<u64>,
+    /// Double-dummy split-pot equity (`0.0..=1.0`) for this seat at the
+    /// current street. `None` in Play mode, for folded seats, non-Hold'em
+    /// tables, or when odds are unavailable.
+    odds: Option<f64>,
 }
 
 fn seat_rows<F: Fn(u8) -> String>(
@@ -324,6 +347,9 @@ fn seat_rows<F: Fn(u8) -> String>(
             pnl: None,
             action: String::new(),
             analysis: None,
+            tokens: None,
+            cost_micro_usd: None,
+            odds: None,
         });
     }
     out
@@ -425,6 +451,15 @@ fn holdem_board_analysis(hole: &str, board: &str) -> Option<String> {
     Some(format!("{hand} {:?}", rank.class))
 }
 
+/// Converts integer micro-USD (1e-6 USD) to a floating-point dollar figure for
+/// display. Cost values are small (single dollars), well within `f64`'s exact
+/// integer range, so the precision loss is immaterial.
+#[allow(clippy::cast_precision_loss)]
+fn micro_usd_to_dollars(micro: u64) -> f64 {
+    micro as f64 / 1_000_000.0
+}
+
+#[allow(clippy::too_many_lines)]
 fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
     let header = Row::new(vec![
         Cell::from("#"),
@@ -435,7 +470,10 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         Cell::from("Action"),
         Cell::from("Pos"),
         Cell::from("P/L"),
+        Cell::from("Tokens"),
+        Cell::from("Cost$"),
         Cell::from("Analysis"),
+        Cell::from("Win%"),
     ])
     .style(
         Style::default()
@@ -467,8 +505,14 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         Constraint::Length(13),
         Constraint::Length(8),
         Constraint::Length(10),
+        // Tokens "999999/9999" (cumulative input/output).
+        Constraint::Length(12),
+        // Cost$ "$0.0234" (notional micro-USD / 1e6).
+        Constraint::Length(9),
         // Analysis: "A♠ A♥ K♦ Q♣ J♠ KingHighStraightFlush" ≈ 36 chars
         Constraint::Length(38),
+        // Win%: "100.0%" is 6 chars; pad to 7.
+        Constraint::Length(7),
     ];
 
     let body: Vec<Row> = rows
@@ -516,6 +560,27 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
                 None => Cell::from("—").style(Style::default().fg(Color::DarkGray)),
                 Some(label) => Cell::from(label.clone()).style(Style::default().fg(Color::Cyan)),
             };
+            // Token/cost cells: "—" when the mode doesn't track them (Play/Arena),
+            // blank for a non-LLM seat (bot, zero tokens/cost), else the value.
+            let tokens_cell = match r.tokens {
+                None => Cell::from("—").style(Style::default().fg(Color::DarkGray)),
+                Some((0, 0)) => Cell::from(""),
+                Some((input, output)) => Cell::from(format!("{input}/{output}")),
+            };
+            let cost_cell = match r.cost_micro_usd {
+                None => Cell::from("—").style(Style::default().fg(Color::DarkGray)),
+                Some(0) => Cell::from(""),
+                Some(v) => Cell::from(format!("${:.4}", micro_usd_to_dollars(v)))
+                    .style(Style::default().fg(Color::Green)),
+            };
+            let odds_cell = match r.odds {
+                None => Cell::from("—").style(Style::default().fg(Color::DarkGray)),
+                Some(e) => Cell::from(format!("{:.1}%", e * 100.0)).style(
+                    Style::default()
+                        .fg(Color::Green)
+                        .add_modifier(Modifier::BOLD),
+                ),
+            };
             Row::new(vec![
                 Cell::from(format!("{}", r.seat)),
                 Cell::from(r.name.clone()),
@@ -525,7 +590,10 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
                 Cell::from(r.action.clone()),
                 Cell::from(r.tag.clone()),
                 pnl_cell,
+                tokens_cell,
+                cost_cell,
                 analysis_cell,
+                odds_cell,
             ])
             .style(style)
         })
@@ -537,12 +605,88 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
     frame.render_widget(widget, area);
 }
 
-fn render_board(table: &TableNoCell, frame: &mut Frame, area: Rect) {
+/// Collects `(seat_index, "card card")` for active (non-folded, non-out)
+/// spectated seats whose revealed cards form exactly a 2-card Hold'em hand.
+fn status_active_holes(status: &TableStatus) -> Vec<(u8, String)> {
+    status
+        .seats
+        .iter()
+        .filter_map(|s| {
+            let folded =
+                s.state == PlayerState::Folded as i32 || s.state == PlayerState::Out as i32;
+            if folded {
+                return None;
+            }
+            let cards = crate::ui::sort_hole_cards(&s.cards);
+            if cards == "??" || cards.trim().is_empty() || cards.split_whitespace().count() != 2 {
+                return None;
+            }
+            Some((u8::try_from(s.seat_number).unwrap_or(u8::MAX), cards))
+        })
+        .collect()
+}
+
+/// Collects `(seat_index, "card card")` for every seat still in the hand
+/// that holds exactly two cards (Hold'em). Seats that are empty, folded, or
+/// hold a non-2-card hand are skipped.
+fn active_holes(table: &TableNoCell) -> Vec<(u8, String)> {
+    let n = u8::try_from(table.seats.0.len()).unwrap_or(u8::MAX);
+    (0..n)
+        .filter_map(|i| {
+            let s = table.seats.get_seat(i)?;
+            if s.is_empty() || !s.player.is_in_hand() || !s.cards.has_cards() {
+                return None;
+            }
+            let cards: Vec<String> = s
+                .cards
+                .as_slice()
+                .iter()
+                .copied()
+                .filter(|c| *c != pkcore::card::Card::BLANK)
+                .map(|c| c.to_string())
+                .collect();
+            if cards.len() != 2 {
+                return None;
+            }
+            Some((i, cards.join(" ")))
+        })
+        .collect()
+}
+
+/// Patches `rows` with cached equities for the active seats. No-op when fewer
+/// than two seats are contesting.
+fn apply_odds(
+    rows: &mut [SeatRow],
+    holes: &[(u8, String)],
+    board: &str,
+    cache: &crate::ui::odds::OddsCache,
+) {
+    if holes.len() < 2 {
+        return;
+    }
+    for (seat, eq) in cache.equities(holes, board) {
+        if let Some(row) = rows.iter_mut().find(|r| r.seat == seat) {
+            row.odds = Some(eq);
+        }
+    }
+}
+
+fn render_board(table: &TableNoCell, paused: bool, frame: &mut Frame, area: Rect) {
     let has_board = table.game.family().uses_community_board();
     let pot = table.effective_pot();
     let phase = format!("{:?}", table.phase);
 
-    let mut spans = Vec::with_capacity(7);
+    let mut spans = Vec::with_capacity(8);
+    if paused {
+        spans.push(Span::styled(
+            "⏸ PAUSED ",
+            Style::default()
+                .fg(Color::Black)
+                .bg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        ));
+        spans.push(Span::raw("    "));
+    }
     if has_board {
         let board_str = table.board.to_string();
         let board_display = if board_str.is_empty() {
@@ -572,8 +716,13 @@ fn render_board(table: &TableNoCell, frame: &mut Frame, area: Rect) {
         Style::default().fg(Color::DarkGray),
     ));
 
+    let title = if paused {
+        " Board — PAUSED (Space resume · →/Enter step) "
+    } else {
+        " Board "
+    };
     let p = Paragraph::new(Text::from(vec![Line::from(spans)]))
-        .block(Block::default().borders(Borders::ALL).title(" Board "))
+        .block(Block::default().borders(Borders::ALL).title(title))
         .alignment(Alignment::Right);
     frame.render_widget(p, area);
 }
@@ -944,6 +1093,9 @@ mod tests {
             pnl: Some(-500),
             action: "bet 500".to_string(),
             analysis: None,
+            tokens: Some((1200, 8)),
+            cost_micro_usd: Some(23_400),
+            odds: None,
         }];
         let backend = TestBackend::new(160, 12);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -953,8 +1105,62 @@ mod tests {
         assert!(header.contains("P/L"));
         assert!(header.contains("Action"));
         assert!(header.contains("Analysis"));
+        assert!(header.contains("Tokens"));
+        assert!(header.contains("Cost$"));
         let body: String = (0..160).map(|x| buffer[(x, 2)].symbol()).collect();
         assert!(body.contains("bet 500"));
+        assert!(body.contains("1200/8"), "tokens column: {body}");
+        assert!(body.contains("$0.0234"), "cost column: {body}");
+    }
+
+    #[test]
+    fn render_seats_shows_win_column_and_value() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let rows = vec![SeatRow {
+            seat: 0,
+            name: "gto".to_string(),
+            chips: 9_500,
+            hole: "Ah Kh".to_string(),
+            bet: 0,
+            tag: String::new(),
+            folded: false,
+            accent: Accent::None,
+            pnl: None,
+            action: String::new(),
+            analysis: None,
+            tokens: None,
+            cost_micro_usd: None,
+            odds: Some(0.824),
+        }];
+        let backend = TestBackend::new(170, 12);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|f| render_seats(f, f.area(), &rows)).unwrap();
+        let buffer = terminal.backend().buffer().clone();
+        let header: String = (0..170).map(|x| buffer[(x, 1)].symbol()).collect();
+        assert!(header.contains("Win%"), "header: {header}");
+        let body: String = (0..170).map(|x| buffer[(x, 2)].symbol()).collect();
+        assert!(body.contains("82.4%"), "body: {body}");
+    }
+
+    #[test]
+    fn active_holes_collects_two_card_seats() {
+        use pkcore::casino::game::ForcedBets;
+        use pkcore::casino::table_no_cell::{PlayerNoCell, SeatNoCell, SeatsNoCell, TableNoCell};
+        use std::str::FromStr;
+
+        let mut s0 = SeatNoCell::new(PlayerNoCell::new_with_chips("a".into(), 1_000));
+        s0.cards = pkcore::arrays::sliced::BoxedCards::from_str("As Ah").unwrap();
+        let mut s1 = SeatNoCell::new(PlayerNoCell::new_with_chips("b".into(), 1_000));
+        s1.cards = pkcore::arrays::sliced::BoxedCards::from_str("Ks Kh").unwrap();
+        let table =
+            TableNoCell::nlh_from_seats(SeatsNoCell::new(vec![s0, s1]), ForcedBets::new(10, 20));
+
+        let holes = active_holes(&table);
+        assert_eq!(holes.len(), 2);
+        assert_eq!(holes[0].0, 0);
+        assert_eq!(holes[0].1.split_whitespace().count(), 2);
     }
 
     #[test]
@@ -1009,6 +1215,9 @@ mod tests {
         assert!(!rows[0].folded);
         assert!(rows[1].folded); // FOLDED state
         assert_eq!(rows[1].accent, Accent::None);
+        // Spectate mode populates token/cost (Some), unlike Play/Arena (None).
+        assert_eq!(rows[0].tokens, Some((0, 0)));
+        assert_eq!(rows[0].cost_micro_usd, Some(0));
     }
 
     #[test]
@@ -1173,6 +1382,42 @@ mod tests {
         let rows = status_to_rows(&status);
         assert!(rows[0].folded);
         assert_eq!(rows[0].accent, Accent::None);
+    }
+
+    #[test]
+    fn status_active_holes_excludes_folded_and_non_holdem() {
+        use pkdealer_proto::dealer::{SeatInfo, TableStatus};
+        let status = TableStatus {
+            seats: vec![
+                SeatInfo {
+                    seat_number: 0,
+                    player_name: "a".into(),
+                    cards: "As Ah".into(),
+                    state: 4,
+                    ..Default::default()
+                },
+                SeatInfo {
+                    seat_number: 1,
+                    player_name: "b".into(),
+                    cards: "Ks Kh".into(),
+                    state: 4,
+                    ..Default::default()
+                },
+                SeatInfo {
+                    seat_number: 2,
+                    player_name: "c".into(),
+                    cards: "7c 2d".into(),
+                    state: 8,
+                    ..Default::default()
+                }, // folded
+            ],
+            board: "Ah Kd Qc".into(),
+            hand_in_progress: true,
+            ..Default::default()
+        };
+        let holes = status_active_holes(&status);
+        assert_eq!(holes.len(), 2);
+        assert!(holes.iter().all(|(s, _)| *s != 2), "folded seat excluded");
     }
 
     #[test]

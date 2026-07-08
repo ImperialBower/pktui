@@ -23,6 +23,8 @@ pub struct ReplayState {
     /// Cursor: which street within the hand. 0=preflop, 1=flop, 2=turn,
     /// 3=river, 4=results.
     pub street_index: usize,
+    /// Per-street odds cache for the replay win% display.
+    pub odds: crate::ui::odds::OddsCache,
 }
 
 /// Number of "streets" pktui's replay viewer recognises (preflop, flop,
@@ -63,6 +65,7 @@ impl ReplayState {
             collection,
             hand_index: 0,
             street_index: 0,
+            odds: crate::ui::odds::OddsCache::new(),
         })
     }
 
@@ -181,6 +184,7 @@ mod tests {
             collection: coll,
             hand_index: 0,
             street_index: 0,
+            odds: crate::ui::odds::OddsCache::new(),
         };
         s.prev_hand();
         assert_eq!(s.hand_index, 0);

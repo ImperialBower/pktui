@@ -103,6 +103,13 @@ pub struct SpectateState {
     /// Snapshots of every hand that has ended this session, oldest first.
     /// Grows unbounded; `D` dumps the whole history.
     pub completed_hands: Vec<TableStatus>,
+    /// Per-street odds cache for the Win% column.
+    pub odds: crate::ui::odds::OddsCache,
+    /// Per-seat hole cards seen this hand, keyed by seat number. Populated from
+    /// every snapshot that still reveals a seat's cards and reset at hand start,
+    /// so the action log can show a player's hand even after they fold (pkcore
+    /// mucks folded hands, blanking them in later snapshots).
+    hand_cards: std::collections::HashMap<u32, String>,
     /// Receiver drained each UI tick.
     rx: Receiver<SpectateMsg>,
     /// Kept alive so the worker thread is not detached prematurely.
@@ -139,6 +146,8 @@ impl SpectateState {
             conn: ConnState::Connecting,
             paused: false,
             completed_hands: Vec::new(),
+            odds: crate::ui::odds::OddsCache::new(),
+            hand_cards: std::collections::HashMap::new(),
             rx,
             _handle: Some(handle),
         })
@@ -170,9 +179,27 @@ impl SpectateState {
                     return;
                 }
                 let ev = *ev;
-                let is_hand_end = EventType::try_from(ev.event_type) == Ok(EventType::HandEnded);
+                let event_type = EventType::try_from(ev.event_type);
+                let is_hand_end = event_type == Ok(EventType::HandEnded);
+                // A new hand resets the per-seat card memory before we record
+                // its fresh deal from the hand-start snapshot below.
+                if event_type == Ok(EventType::HandStarted) {
+                    self.hand_cards.clear();
+                }
                 if let Some(status) = ev.current_status {
                     self.status = Some(status);
+                }
+                // Remember each still-revealed seat's cards. pkcore blanks a
+                // folded seat's cards in later snapshots, so we only ever store
+                // (never overwrite with) revealed hands — the pre-fold cards
+                // survive for the action log to show.
+                if let Some(status) = self.status.as_ref() {
+                    for seat in &status.seats {
+                        if is_revealed_cards(&seat.cards) {
+                            self.hand_cards
+                                .insert(seat.seat_number, crate::ui::sort_hole_cards(&seat.cards));
+                        }
+                    }
                 }
                 // On hand end, archive the end-of-hand snapshot — preferring
                 // the event's own status, falling back to the latest known.
@@ -180,7 +207,17 @@ impl SpectateState {
                     self.completed_hands.push(snapshot);
                 }
                 if !ev.description.is_empty() {
-                    log.push(severity_for(ev.event_type), ev.description);
+                    // For player-action lines, append the chip amount (for
+                    // betting actions) and the acting seat's hole cards from the
+                    // remembered hand — so the log shows how much each player
+                    // committed and what they held, even after a fold (when
+                    // pkcore has already mucked the cards in the live snapshot).
+                    let line = if event_type == Ok(EventType::PlayerAction) {
+                        augment_action_line(&ev.description, self.status.as_ref(), &self.hand_cards)
+                    } else {
+                        ev.description
+                    };
+                    log.push(severity_for(ev.event_type), line);
                 }
             }
             SpectateMsg::Config(cfg) => {
@@ -316,12 +353,70 @@ impl SpectateState {
                 conn: ConnState::Connecting,
                 paused: false,
                 completed_hands: Vec::new(),
+                odds: crate::ui::odds::OddsCache::new(),
+                hand_cards: std::collections::HashMap::new(),
                 rx,
                 _handle: None,
             },
             tx,
         )
     }
+}
+
+/// Enriches a player-action log line with the chip amount and the acting
+/// seat's hole cards: `"Seat N name: Raise"` → `"Seat N name: Raise 600 [A♠ K♦]"`.
+///
+/// `desc` is the dealer's pre-formatted line; the seat index is parsed from its
+/// `"Seat N"` prefix. The amount is the acting seat's per-street `bet` from
+/// `status`, appended only for betting verbs (bet / call / raise / all-in) —
+/// never for check / fold. Cards come from `hand_cards` (the remembered
+/// pre-fold hand). Returns `desc` unchanged when the seat can't be parsed, so a
+/// malformed line is never corrupted.
+fn augment_action_line(
+    desc: &str,
+    status: Option<&TableStatus>,
+    hand_cards: &std::collections::HashMap<u32, String>,
+) -> String {
+    let Some(seat) = parse_seat_prefix(desc) else {
+        return desc.to_string();
+    };
+    let mut line = desc.to_string();
+    if action_has_amount(desc)
+        && let Some(status) = status
+        && let Some(info) = status.seats.iter().find(|s| s.seat_number == seat)
+        && info.bet > 0
+    {
+        line = format!("{line} {}", info.bet);
+    }
+    if let Some(cards) = hand_cards.get(&seat).filter(|c| !c.is_empty()) {
+        line = format!("{line} [{cards}]");
+    }
+    line
+}
+
+/// Whether the action verb ending a player-action line carries a chip amount
+/// (`Bet` / `Call` / `Raise` / `AllIn`) versus none (`Check` / `Fold`). The
+/// verb is the token after the final `:` — the prost `Debug` of the proto
+/// `ActionType`, e.g. `"Seat 3 gto_1: Raise"` → `"Raise"`.
+fn action_has_amount(desc: &str) -> bool {
+    matches!(
+        desc.rsplit(':').next().map(str::trim),
+        Some("Bet" | "Call" | "Raise" | "AllIn")
+    )
+}
+
+/// Whether a proto `cards` string holds real, revealed hole cards — i.e. not
+/// empty, not the `??` muck marker, and not a blanked (`__`) mucked hand.
+fn is_revealed_cards(cards: &str) -> bool {
+    !cards.is_empty() && cards != "??" && !cards.contains('_')
+}
+
+/// Parses the seat index from a `"Seat N…"` description prefix, or `None` if
+/// the line does not start with `"Seat "` followed by digits.
+fn parse_seat_prefix(desc: &str) -> Option<u32> {
+    let rest = desc.strip_prefix("Seat ")?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    digits.parse().ok()
 }
 
 /// Maps a proto `EventType` discriminant to a log [`Severity`].
@@ -436,6 +531,136 @@ mod tests {
         state.apply(SpectateMsg::Event(Box::new(ev)), &mut log);
         assert_eq!(state.status.as_ref().unwrap().pot, 1_000);
         assert_eq!(log.len(), 1);
+    }
+
+    #[test]
+    fn parse_seat_prefix_reads_index_or_none() {
+        assert_eq!(parse_seat_prefix("Seat 0 gto_1: Fold"), Some(0));
+        assert_eq!(parse_seat_prefix("Seat 12 lag: Raise"), Some(12));
+        assert_eq!(parse_seat_prefix("Hand ended. tag wins 2850"), None);
+        assert_eq!(parse_seat_prefix("Seat: malformed"), None);
+    }
+
+    #[test]
+    fn is_revealed_cards_distinguishes_real_from_mucked() {
+        assert!(is_revealed_cards("Ah Kd"));
+        assert!(is_revealed_cards("J♠ 8♣"));
+        assert!(!is_revealed_cards(""));
+        assert!(!is_revealed_cards("??"));
+        assert!(!is_revealed_cards("__ __")); // pkcore-mucked, blanked hand
+    }
+
+    #[test]
+    fn augment_action_line_adds_cards_and_amount() {
+        let mut cards = std::collections::HashMap::new();
+        cards.insert(0u32, "Ah Kd".to_string());
+        let mut status = sample_status();
+        status.seats[0].bet = 600;
+
+        // Betting verbs get the per-street amount AND the remembered cards.
+        assert_eq!(
+            augment_action_line("Seat 0 gto_1: Raise", Some(&status), &cards),
+            "Seat 0 gto_1: Raise 600 [Ah Kd]"
+        );
+        assert_eq!(
+            augment_action_line("Seat 0 gto_1: Call", Some(&status), &cards),
+            "Seat 0 gto_1: Call 600 [Ah Kd]"
+        );
+        // Check/Fold never get an amount, even when bet > 0.
+        assert_eq!(
+            augment_action_line("Seat 0 gto_1: Check", Some(&status), &cards),
+            "Seat 0 gto_1: Check [Ah Kd]"
+        );
+        // Seat with no remembered cards / unparseable prefix → unchanged.
+        assert_eq!(
+            augment_action_line("Seat 7 ghost: Call", Some(&status), &cards),
+            "Seat 7 ghost: Call"
+        );
+        assert_eq!(
+            augment_action_line("Hand ended. gto wins 2100", Some(&status), &cards),
+            "Hand ended. gto wins 2100"
+        );
+    }
+
+    #[test]
+    fn action_has_amount_only_for_betting_verbs() {
+        assert!(action_has_amount("Seat 0 gto_1: Bet"));
+        assert!(action_has_amount("Seat 0 gto_1: Call"));
+        assert!(action_has_amount("Seat 0 gto_1: Raise"));
+        assert!(action_has_amount("Seat 0 gto_1: AllIn"));
+        assert!(!action_has_amount("Seat 0 gto_1: Check"));
+        assert!(!action_has_amount("Seat 0 gto_1: Fold"));
+    }
+
+    #[test]
+    fn fold_reveals_cards_remembered_from_earlier_snapshot() {
+        // Reproduces the live bug: a seat shows real cards while in the hand,
+        // then folds — pkcore blanks the cards in the fold snapshot. The log
+        // must still show the hand, recovered from the earlier snapshot.
+        let (mut state, _tx) = SpectateState::detached("http://localhost:50051");
+        let mut log = LogPanel::new();
+
+        // Hand start: seat 0 holds Ah Kd (full spectator visibility).
+        let mut started = sample_status();
+        started.seats[0].cards = "Ah Kd".into();
+        state.apply(
+            SpectateMsg::Event(Box::new(TableEvent {
+                timestamp: 1,
+                event_type: 3, // HAND_STARTED
+                description: "Hand started — blinds 300/600".into(),
+                current_status: Some(started),
+            })),
+            &mut log,
+        );
+
+        // Seat 0 folds: pkcore has mucked the cards → "__ __" in this snapshot.
+        let mut folded = sample_status();
+        folded.seats[0].cards = "__ __".into();
+        folded.seats[0].state = 8; // FOLDED
+        state.apply(
+            SpectateMsg::Event(Box::new(TableEvent {
+                timestamp: 2,
+                event_type: 4, // PLAYER_ACTION
+                description: "Seat 0 gto_1: Fold".into(),
+                current_status: Some(folded),
+            })),
+            &mut log,
+        );
+
+        let line = log.iter().last().expect("a log line").text.clone();
+        assert_eq!(line, "Seat 0 gto_1: Fold [Ah Kd]");
+    }
+
+    #[test]
+    fn hand_start_resets_remembered_cards() {
+        let (mut state, _tx) = SpectateState::detached("http://localhost:50051");
+        let mut log = LogPanel::new();
+        let mut h1 = sample_status();
+        h1.seats[0].cards = "Ah Kd".into();
+        state.apply(
+            SpectateMsg::Event(Box::new(TableEvent {
+                timestamp: 1,
+                event_type: 3, // HAND_STARTED
+                description: "Hand started".into(),
+                current_status: Some(h1),
+            })),
+            &mut log,
+        );
+        assert_eq!(state.hand_cards.get(&0).map(String::as_str), Some("Ah Kd"));
+
+        // A new hand-start with the seat's cards hidden clears the old memory.
+        let mut h2 = sample_status();
+        h2.seats[0].cards = "??".into();
+        state.apply(
+            SpectateMsg::Event(Box::new(TableEvent {
+                timestamp: 2,
+                event_type: 3,
+                description: "Hand started".into(),
+                current_status: Some(h2),
+            })),
+            &mut log,
+        );
+        assert_eq!(state.hand_cards.get(&0), None);
     }
 
     #[test]

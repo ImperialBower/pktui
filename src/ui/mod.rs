@@ -17,6 +17,7 @@ use crate::app::{App, AppMode};
 pub mod action_bar;
 pub mod help;
 pub mod log_view;
+pub mod odds;
 pub mod replay_view;
 pub mod table;
 
