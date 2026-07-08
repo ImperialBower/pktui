@@ -33,7 +33,7 @@
 - Consumes: `DealEval::new(HoleCards) -> Result<DealEval, PKError>` (`.report.players: Vec<PlayerEquity>` with `win/tie/equity: f64`); `FlopEval::try_from(Game)`, `RiverEval::try_from(Game)`, `TurnEval::try_from(&Game)` — each has `.results: wincounter::results::WinResults`; `WinResults::wins_and_ties_percentages(usize) -> (f32, f32)` (percent 0–100); `Board { flop: Three, turn: Card, river: Card }` with `Three::is_dealt()` / `Card::is_dealt()`.
 - Produces: `pkcore::play::game::StreetEquity { win: f64, tie: f64, equity: f64 }` and `Game::street_equities(&self) -> Result<Vec<StreetEquity>, PKError>` (one entry per `self.hands`, behind `feature = "equity"`).
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add to the existing `#[cfg(test)]` module at the bottom of `src/play/game.rs` (create one if absent, mirroring the file's style):
 
@@ -82,12 +82,12 @@ mod street_equities_tests {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test --features equity street_equities -- --nocapture`
 Expected: FAIL — `no method named street_equities` / `cannot find type StreetEquity`.
 
-- [ ] **Step 3: Add `StreetEquity` and the method**
+- [x] **Step 3: Add `StreetEquity` and the method**
 
 In `src/play/game.rs`, add near the top of the file (after imports) the struct, and add `use wincounter::results::WinResults;` to the imports if not already present:
 
@@ -191,7 +191,7 @@ In `src/prelude.rs`, add beside the existing stage exports (around line 92–96)
 pub use crate::play::game::StreetEquity;
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test --features equity street_equities -- --nocapture`
 Expected: PASS (3 tests).
@@ -199,12 +199,12 @@ Expected: PASS (3 tests).
 Run the doc test too: `cargo test --features equity --doc street_equities`
 Expected: PASS.
 
-- [ ] **Step 5: Verify clippy + full build are clean**
+- [x] **Step 5: Verify clippy + full build are clean**
 
 Run: `cargo clippy --features equity --all-targets -- -D warnings`
 Expected: no warnings.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 Provide this command to the user (do not run it yourself):
 
@@ -220,7 +220,7 @@ git add src/play/game.rs src/prelude.rs && git commit -m "feat(equity): unified 
 - Modify: `Cargo.toml` (version `0.1.7` → `0.1.8`)
 - Modify: `CHANGELOG.md` (new entry)
 
-- [ ] **Step 1: Bump the version**
+- [x] **Step 1: Bump the version**
 
 In `src/.../Cargo.toml` (pkcore root `Cargo.toml`), change:
 
@@ -232,7 +232,7 @@ to
 version = "0.1.8"
 ```
 
-- [ ] **Step 2: Add the CHANGELOG entry**
+- [x] **Step 2: Add the CHANGELOG entry**
 
 Add a new section at the top of `CHANGELOG.md`'s unreleased/most-recent area:
 
@@ -246,12 +246,12 @@ Add a new section at the top of `CHANGELOG.md`'s unreleased/most-recent area:
   (`win + tie/2`) as fractions for every street.
 ```
 
-- [ ] **Step 3: Verify it builds**
+- [x] **Step 3: Verify it builds**
 
 Run: `cargo build --features equity`
 Expected: compiles; resolves as `pkcore v0.1.8`.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 Provide this command to the user (do not run it yourself):
 
@@ -259,7 +259,7 @@ Provide this command to the user (do not run it yourself):
 git add Cargo.toml CHANGELOG.md && git commit -m "chore: bump pkcore to 0.1.8 for street_equities"
 ```
 
-- [ ] **Step 5: ⛔ STOP — hand off for publish**
+- [x] **Step 5: ⛔ STOP — hand off for publish**
 
 Notify the user: pkcore work is complete and committed. **The user publishes `pkcore 0.1.8` to crates.io.** Do not start Phase B until the user confirms the crate is published.
 
@@ -274,7 +274,7 @@ Notify the user: pkcore work is complete and committed. **The user publishes `pk
 **Files:**
 - Modify: `Cargo.toml`
 
-- [ ] **Step 1: Update the pkcore dependency**
+- [x] **Step 1: Update the pkcore dependency**
 
 In `Cargo.toml`, change:
 
@@ -288,12 +288,12 @@ pkcore = { version = "0.1.8", features = ["bot-profiles", "hand-histories", "equ
 
 (The `[patch.crates-io] pkcore = { path = "../pkcore" }` block may be temporarily un-commented for local iteration but must be re-commented before committing, per the note already in the file.)
 
-- [ ] **Step 2: Verify it builds against the published crate**
+- [x] **Step 2: Verify it builds against the published crate**
 
 Run: `cargo build`
 Expected: resolves `pkcore v0.1.8`, compiles.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 Provide this command to the user:
 
@@ -314,7 +314,7 @@ git add Cargo.toml Cargo.lock && git commit -m "build: require pkcore 0.1.8 with
 - Consumes: `pkcore::play::game::{Game, StreetEquity}`, `pkcore::play::board::Board`, `pkcore::play::hole_cards::HoleCards` (all `FromStr`; `Board: Default`).
 - Produces: `OddsCache::new() -> OddsCache`; `OddsCache::equities(&self, holes: &[(u8, String)], board: &str) -> Vec<(u8, f64)>` — split-pot equity per active seat, recomputed only when `(holes, board)` change.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `src/ui/odds.rs` containing only the test module first:
 
@@ -360,12 +360,12 @@ mod tests {
 }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p pktui odds:: -- --nocapture`
 Expected: FAIL — `cannot find type OddsCache`.
 
-- [ ] **Step 3: Implement the module**
+- [x] **Step 3: Implement the module**
 
 Prepend the implementation above the test module in `src/ui/odds.rs`:
 
@@ -490,7 +490,7 @@ Add to `src/ui/mod.rs` (alongside the other `pub mod` lines):
 pub mod odds;
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `cargo test -p pktui odds:: -- --nocapture`
 Expected: PASS (3 tests).
@@ -498,7 +498,7 @@ Expected: PASS (3 tests).
 Run: `cargo test --doc -p pktui`
 Expected: PASS (the two new doc tests included).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 Provide this command to the user:
 
@@ -519,7 +519,7 @@ git add src/ui/odds.rs src/ui/mod.rs && git commit -m "feat(ui): OddsCache — c
 - Consumes: `OddsCache::equities`; `TableNoCell` (`seats.get_seat(i)`, `seat.cards.as_slice()`, `seat.player.is_in_hand()`, `seat.cards.has_cards()`); `pkcore::card::Card::BLANK`; `state.session.table.board.to_string()`.
 - Produces: `SeatRow.odds: Option<f64>`; a `Win%` column; `active_holes(&TableNoCell) -> Vec<(u8, String)>`; `apply_odds(&mut [SeatRow], &[(u8, String)], &str, &OddsCache)`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to the `#[cfg(test)] mod tests` in `src/ui/table.rs`:
 
@@ -574,12 +574,12 @@ Add to the `#[cfg(test)] mod tests` in `src/ui/table.rs`:
     }
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p pktui --lib table::tests::render_seats_shows_win_column_and_value table::tests::active_holes_collects_two_card_seats`
 Expected: FAIL — missing `odds` field on `SeatRow` / `active_holes` not found.
 
-- [ ] **Step 3: Add the `odds` field and update every `SeatRow` construction**
+- [x] **Step 3: Add the `odds` field and update every `SeatRow` construction**
 
 In `src/ui/table.rs`, add to `struct SeatRow`:
 
@@ -592,7 +592,7 @@ In `src/ui/table.rs`, add to `struct SeatRow`:
 
 Then set `odds: None` in the two existing constructions: in `seat_rows` (the `out.push(SeatRow { ... })`) and in `status_to_rows` (the `SeatRow { ... }` returned per seat). Spectate fills it in Task 6; Arena patches it below; Play leaves it `None`.
 
-- [ ] **Step 4: Add the header, width, and cell**
+- [x] **Step 4: Add the header, width, and cell**
 
 In `render_seats`, append `Cell::from("Win%")` to the `header` row (after `"Analysis"`), append `Constraint::Length(7)` to the `widths` array (after the Analysis constraint), and add the cell to each body `Row::new(vec![...])` after `analysis_cell`:
 
@@ -606,7 +606,7 @@ In `render_seats`, append `Cell::from("Win%")` to the `header` row (after `"Anal
 
 Add `odds_cell` as the final entry of the `Row::new(vec![...])`.
 
-- [ ] **Step 5: Add the `active_holes` + `apply_odds` helpers**
+- [x] **Step 5: Add the `active_holes` + `apply_odds` helpers**
 
 Add to `src/ui/table.rs`:
 
@@ -652,7 +652,7 @@ fn apply_odds(rows: &mut [SeatRow], holes: &[(u8, String)], board: &str, cache: 
 }
 ```
 
-- [ ] **Step 6: Wire Arena**
+- [x] **Step 6: Wire Arena**
 
 In `src/modes/arena.rs`, add to the `ArenaState` struct:
 
@@ -675,11 +675,11 @@ In `src/ui/table.rs`, update `render_table_view_arena` so that after building `r
     render_seats(frame, chunks[1], &rows);
 ```
 
-- [ ] **Step 7: Update the existing `render_seats_shows_pnl_column_header` test**
+- [x] **Step 7: Update the existing `render_seats_shows_pnl_column_header` test**
 
 That test builds a `SeatRow` literal — add `odds: None,` to it so it compiles.
 
-- [ ] **Step 8: Run tests + clippy**
+- [x] **Step 8: Run tests + clippy**
 
 Run: `cargo test -p pktui --lib table::`
 Expected: PASS (new + existing table tests).
@@ -687,7 +687,7 @@ Expected: PASS (new + existing table tests).
 Run: `cargo clippy -p pktui --all-targets -- -D warnings`
 Expected: no warnings.
 
-- [ ] **Step 9: Commit**
+- [x] **Step 9: Commit**
 
 Provide this command to the user:
 
@@ -708,7 +708,7 @@ git add src/ui/table.rs src/modes/arena.rs && git commit -m "feat(ui): Win% colu
 - Consumes: `TableStatus { seats: Vec<SeatInfo>, board: String }`, `SeatInfo { seat_number, cards, state }`, `PlayerState`, `crate::ui::sort_hole_cards`, `apply_odds` (Task 5).
 - Produces: `status_active_holes(&TableStatus) -> Vec<(u8, String)>`.
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Add to `#[cfg(test)] mod tests` in `src/ui/table.rs`:
 
@@ -732,12 +732,12 @@ Add to `#[cfg(test)] mod tests` in `src/ui/table.rs`:
     }
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `cargo test -p pktui --lib table::tests::status_active_holes_excludes_folded_and_non_holdem`
 Expected: FAIL — `status_active_holes` not found.
 
-- [ ] **Step 3: Add the helper**
+- [x] **Step 3: Add the helper**
 
 In `src/ui/table.rs`:
 
@@ -764,7 +764,7 @@ fn status_active_holes(status: &TableStatus) -> Vec<(u8, String)> {
 }
 ```
 
-- [ ] **Step 4: Add the cache field to `SpectateState`**
+- [x] **Step 4: Add the cache field to `SpectateState`**
 
 In `src/modes/spectate.rs`, add to the struct:
 
@@ -775,7 +775,7 @@ In `src/modes/spectate.rs`, add to the struct:
 
 and add `odds: crate::ui::odds::OddsCache::new(),` to every `SpectateState { ... }` construction (including the `detached` test constructor — the compiler will flag each).
 
-- [ ] **Step 5: Apply odds in the spectate render**
+- [x] **Step 5: Apply odds in the spectate render**
 
 In `render_table_view_spectate`, where `status` is present:
 
@@ -786,7 +786,7 @@ In `render_table_view_spectate`, where `status` is present:
         render_seats(frame, chunks[1], &rows);
 ```
 
-- [ ] **Step 6: Run tests + clippy**
+- [x] **Step 6: Run tests + clippy**
 
 Run: `cargo test -p pktui --lib table::`
 Expected: PASS.
@@ -794,7 +794,7 @@ Expected: PASS.
 Run: `cargo clippy -p pktui --all-targets -- -D warnings`
 Expected: no warnings.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Provide this command to the user:
 
@@ -817,7 +817,7 @@ git add src/ui/table.rs src/modes/spectate.rs && git commit -m "feat(ui): specta
 
 **Note:** Replay shows the full-field double-dummy odds among all seats with recorded hole cards at the displayed board. It does **not** fold-adjust (which would require replaying the action log) — a deliberate simplification appropriate to a study/replay view; folded-seat exclusion can be a later refinement.
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Add a test module section to `src/ui/replay_view.rs` (extend the existing `#[cfg(test)] mod tests`). Build a minimal `HandHistory` via the same path the replay loader uses, or assert the pure helpers directly:
 
@@ -846,12 +846,12 @@ Add a test module section to `src/ui/replay_view.rs` (extend the existing `#[cfg
 
 > The implementer writes `sample_hand_yaml()` as a `fn -> String` returning a minimal valid hand-history YAML with two players (each with `hole_cards`) and `streets.flop.cards = "Ah Kd Qc"`, `streets.turn.card = "2s"`, `streets.river.card = "7h"`. Derive its exact shape by serializing a `HandHistory` the loader already accepts (e.g. round-trip an existing fixture under `tests/` or `pkcore`'s `interactive_play` output) so the field names match the deserializer. If `serde_yaml` is not already a dev-dependency, reuse `HandCollection::from_yaml` + `.hands()[0]` instead to avoid adding a dependency.
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `cargo test -p pktui --lib replay_view::tests::replay_board_accumulates_per_street replay_view::tests::replay_holes_collects_recorded_hands`
 Expected: FAIL — helpers not found.
 
-- [ ] **Step 3: Implement the helpers**
+- [x] **Step 3: Implement the helpers**
 
 In `src/ui/replay_view.rs`:
 
@@ -896,7 +896,7 @@ fn replay_board(hand: &HandHistory, street: usize) -> String {
 }
 ```
 
-- [ ] **Step 4: Show win% in the header rows**
+- [x] **Step 4: Show win% in the header rows**
 
 Add the cache field to `ReplayState` in `src/modes/replay.rs`:
 
@@ -932,7 +932,7 @@ and in `render_header`, when building each player line, look up the seat's equit
 
 (Adjust the header legend line `"seat  name ... hole"` to include a trailing `win%` label.)
 
-- [ ] **Step 5: Run tests + clippy**
+- [x] **Step 5: Run tests + clippy**
 
 Run: `cargo test -p pktui --lib replay_view::`
 Expected: PASS.
@@ -940,12 +940,12 @@ Expected: PASS.
 Run: `cargo clippy -p pktui --all-targets -- -D warnings`
 Expected: no warnings.
 
-- [ ] **Step 6: Full test sweep**
+- [x] **Step 6: Full test sweep**
 
 Run: `cargo test -p pktui`
 Expected: PASS (all unit + integration + doc tests).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 Provide this command to the user:
 
