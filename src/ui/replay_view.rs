@@ -236,6 +236,7 @@ fn format_action(a: &Action, hand: &HandHistory) -> String {
         ActionType::Bet => format!("bets {}", a.amount.map_or(0, chips)),
         ActionType::Raise => format!("raises to {}", a.amount.map_or(0, chips)),
         ActionType::AllIn => format!("ALL-IN ({})", a.amount.map_or(0, chips)),
+        _ => "acts".to_string(),
     };
     format!("  {name:<22}  {verb}")
 }

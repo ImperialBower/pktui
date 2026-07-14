@@ -12,14 +12,11 @@ db-urls = ["https://github.com/rustsec/advisory-db"]
 yanked = "deny"
 # A list of advisory IDs to ignore. Note that ignored advisories will still
 # output a note when they are encountered.
-ignore = [
-    # atomic-polyfill is unmaintained — pulled in transitively via
-    #   heapless → postcard → pkcore.
-    # We cannot fix this from pktui; the upstream chain needs to migrate to
-    # portable-atomic. Tracked for review when postcard publishes a release
-    # that drops heapless 0.7.
-    "RUSTSEC-2023-0089",
-]
+#
+# Empty as of pkcore 0.2.1: that release disables postcard's default
+# `heapless-cas` feature, so `heapless 0.7 → atomic-polyfill` (RUSTSEC-2023-0089,
+# unmaintained) is no longer in the dependency tree and needs no suppression.
+ignore = []
 
 [licenses]
 # List of explicitly allowed licenses

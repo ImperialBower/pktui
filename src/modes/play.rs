@@ -14,7 +14,7 @@ use pkcore::bot::profile::BotProfile;
 use pkcore::casino::action::PlayerAction;
 use pkcore::casino::game::ForcedBets;
 use pkcore::casino::session::{PokerSession, SessionStep};
-use pkcore::casino::table_no_cell::{PlayerNoCell, SeatNoCell, SeatsNoCell, TableNoCell};
+use pkcore::casino::table::{Player, Seat, Seats, Table};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 
@@ -242,23 +242,21 @@ pub struct PlayState {
 /// `--small-bet`/`--big-bet` aren't supplied for Stud, they fall back to
 /// `--small-blind`/`--big-blind` so the existing CLI defaults still produce
 /// a playable table.
-fn build_table(args: &PlayArgs, seats: SeatsNoCell) -> TableNoCell {
+fn build_table(args: &PlayArgs, seats: Seats) -> Table {
     match args.game.variant {
-        Variant::Nlhe => TableNoCell::nlh_from_seats(
+        Variant::Nlhe => Table::nlh_from_seats(
             seats,
             ForcedBets::new(args.game.small_blind, args.game.big_blind),
         ),
-        Variant::Plo => {
-            TableNoCell::plo_from_seats(seats, (args.game.small_blind, args.game.big_blind))
-        }
-        Variant::StudHi => TableNoCell::stud_hi_from_seats(
+        Variant::Plo => Table::plo_from_seats(seats, (args.game.small_blind, args.game.big_blind)),
+        Variant::StudHi => Table::stud_hi_from_seats(
             seats,
             args.game.ante.unwrap_or(10),
             args.game.bring_in.unwrap_or(25),
             args.game.small_bet.unwrap_or(args.game.small_blind),
             args.game.big_bet.unwrap_or(args.game.big_blind),
         ),
-        Variant::Razz => TableNoCell::razz_from_seats(
+        Variant::Razz => Table::razz_from_seats(
             seats,
             args.game.ante.unwrap_or(10),
             args.game.bring_in.unwrap_or(25),
@@ -329,18 +327,18 @@ impl PlayState {
         pool.shuffle(&mut rng);
         let bots: Vec<BotProfile> = pool.into_iter().take(bot_count).collect();
 
-        let mut seats = vec![SeatNoCell::new(PlayerNoCell::new_with_chips(
+        let mut seats = vec![Seat::new(Player::new_with_chips(
             HERO_NAME.to_string(),
             args.game.chips,
         ))];
         for b in &bots {
-            seats.push(SeatNoCell::new(PlayerNoCell::new_with_chips(
+            seats.push(Seat::new(Player::new_with_chips(
                 b.name.clone(),
                 args.game.chips,
             )));
         }
 
-        let table = build_table(args, SeatsNoCell::new(seats));
+        let table = build_table(args, Seats::new(seats));
 
         let mut session = PokerSession::new(table);
         session.start_hand()?;
@@ -667,7 +665,7 @@ fn instant_minus(d: Duration) -> Instant {
 /// fallback would only trigger on a >255-seat table, which pkcore does not
 /// support.
 #[must_use]
-fn seat_count(table: &TableNoCell) -> u8 {
+fn seat_count(table: &Table) -> u8 {
     u8::try_from(table.seats.0.len()).unwrap_or(u8::MAX)
 }
 
@@ -682,19 +680,19 @@ fn seat_count(table: &TableNoCell) -> u8 {
 /// ```
 /// use pkcore::casino::action::PlayerAction;
 /// use pkcore::casino::game::ForcedBets;
-/// use pkcore::casino::table_no_cell::{PlayerNoCell, SeatNoCell, SeatsNoCell, TableNoCell};
+/// use pkcore::casino::table::{Player, Seat, Seats, Table};
 /// use pktui::modes::play::describe_action;
 ///
-/// let seats = SeatsNoCell::new(vec![
-///     SeatNoCell::new(PlayerNoCell::new_with_chips("A".into(), 1000)),
-///     SeatNoCell::new(PlayerNoCell::new_with_chips("B".into(), 1000)),
+/// let seats = Seats::new(vec![
+///     Seat::new(Player::new_with_chips("A".into(), 1000)),
+///     Seat::new(Player::new_with_chips("B".into(), 1000)),
 /// ]);
-/// let table = TableNoCell::nlh_from_seats(seats, ForcedBets::new(10, 20));
+/// let table = Table::nlh_from_seats(seats, ForcedBets::new(10, 20));
 /// assert_eq!(describe_action(&table, 0, PlayerAction::Fold), "folds");
 /// assert_eq!(describe_action(&table, 0, PlayerAction::Bet(50)), "bets 50");
 /// ```
 #[must_use]
-pub fn describe_action(table: &TableNoCell, seat: u8, action: PlayerAction) -> String {
+pub fn describe_action(table: &Table, seat: u8, action: PlayerAction) -> String {
     match action {
         PlayerAction::Fold => "folds".into(),
         PlayerAction::Check => "checks".into(),
@@ -728,7 +726,7 @@ fn severity_for(action: PlayerAction) -> Severity {
 /// 5-card hand class derived from `Seven::hand_rank_and_hand`.
 #[must_use]
 pub fn capture_showdown<F: Fn(u8) -> String>(
-    table: &TableNoCell,
+    table: &Table,
     n_seats: u8,
     name_of: F,
 ) -> Option<Vec<ShowdownSeat>> {
@@ -905,11 +903,11 @@ mod tests {
 
     #[test]
     fn describe_action_variants() {
-        let seats = SeatsNoCell::new(vec![
-            SeatNoCell::new(PlayerNoCell::new_with_chips("A".into(), 1000)),
-            SeatNoCell::new(PlayerNoCell::new_with_chips("B".into(), 1000)),
+        let seats = Seats::new(vec![
+            Seat::new(Player::new_with_chips("A".into(), 1000)),
+            Seat::new(Player::new_with_chips("B".into(), 1000)),
         ]);
-        let table = TableNoCell::nlh_from_seats(seats, ForcedBets::new(10, 20));
+        let table = Table::nlh_from_seats(seats, ForcedBets::new(10, 20));
         assert_eq!(describe_action(&table, 0, PlayerAction::Fold), "folds");
         assert_eq!(describe_action(&table, 0, PlayerAction::Bet(50)), "bets 50");
         assert_eq!(
