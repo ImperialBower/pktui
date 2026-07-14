@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 use pkcore::bot::profile::BotProfile;
 use pkcore::casino::game::ForcedBets;
 use pkcore::casino::session::{PokerSession, SessionStep};
-use pkcore::casino::table_no_cell::{PlayerNoCell, SeatNoCell, SeatsNoCell, TableNoCell};
+use pkcore::casino::table::{Player, Seat, Seats, Table};
 use rand::rngs::SmallRng;
 use rand::seq::SliceRandom;
 
@@ -63,23 +63,21 @@ pub struct ArenaState {
 }
 
 /// Mirrors `play::build_table` for arena's args struct.
-fn build_table(args: &ArenaArgs, seats: SeatsNoCell) -> TableNoCell {
+fn build_table(args: &ArenaArgs, seats: Seats) -> Table {
     match args.game.variant {
-        Variant::Nlhe => TableNoCell::nlh_from_seats(
+        Variant::Nlhe => Table::nlh_from_seats(
             seats,
             ForcedBets::new(args.game.small_blind, args.game.big_blind),
         ),
-        Variant::Plo => {
-            TableNoCell::plo_from_seats(seats, (args.game.small_blind, args.game.big_blind))
-        }
-        Variant::StudHi => TableNoCell::stud_hi_from_seats(
+        Variant::Plo => Table::plo_from_seats(seats, (args.game.small_blind, args.game.big_blind)),
+        Variant::StudHi => Table::stud_hi_from_seats(
             seats,
             args.game.ante.unwrap_or(10),
             args.game.bring_in.unwrap_or(25),
             args.game.small_bet.unwrap_or(args.game.small_blind),
             args.game.big_bet.unwrap_or(args.game.big_blind),
         ),
-        Variant::Razz => TableNoCell::razz_from_seats(
+        Variant::Razz => Table::razz_from_seats(
             seats,
             args.game.ante.unwrap_or(10),
             args.game.bring_in.unwrap_or(25),
@@ -146,17 +144,12 @@ impl ArenaState {
         pool.shuffle(&mut rng);
         let bots: Vec<BotProfile> = pool.into_iter().take(bot_count).collect();
 
-        let seats: Vec<SeatNoCell> = bots
+        let seats: Vec<Seat> = bots
             .iter()
-            .map(|b| {
-                SeatNoCell::new(PlayerNoCell::new_with_chips(
-                    b.name.clone(),
-                    args.game.chips,
-                ))
-            })
+            .map(|b| Seat::new(Player::new_with_chips(b.name.clone(), args.game.chips)))
             .collect();
 
-        let table = build_table(args, SeatsNoCell::new(seats));
+        let table = build_table(args, Seats::new(seats));
 
         let mut session = PokerSession::new(table);
         session.start_hand()?;

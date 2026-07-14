@@ -8,7 +8,7 @@ use pkcore::bot::profile::BotProfile;
 use pkcore::casino::action::PlayerAction;
 use pkcore::casino::game::ForcedBets;
 use pkcore::casino::session::{PokerSession, SessionStep};
-use pkcore::casino::table_no_cell::{PlayerNoCell, SeatNoCell, SeatsNoCell, TableNoCell};
+use pkcore::casino::table::{Player, Seat, Seats, Table};
 use pktui::cli::{PlayArgs, Variant};
 use pktui::log_panel::LogPanel;
 use pktui::modes::{Awaiting, PlayState};
@@ -28,12 +28,12 @@ fn make_session(stacks: usize) -> PokerSession {
         "maniac",
         "loose_aggressive",
     ];
-    let seats: Vec<SeatNoCell> = names
+    let seats: Vec<Seat> = names
         .iter()
-        .map(|n| SeatNoCell::new(PlayerNoCell::new_with_chips((*n).to_string(), stacks)))
+        .map(|n| Seat::new(Player::new_with_chips((*n).to_string(), stacks)))
         .collect();
     let _ = ForcedBets::new(0, 0);
-    let table = TableNoCell::stud_hi_from_seats(SeatsNoCell::new(seats), 10, 25, 50, 100);
+    let table = Table::stud_hi_from_seats(Seats::new(seats), 10, 25, 50, 100);
     let mut session = PokerSession::new(table);
     session.start_hand().unwrap();
     session

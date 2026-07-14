@@ -15,7 +15,7 @@
 //! The seat list uses a [`Table`](ratatui::widgets::Table) widget so columns
 //! stay aligned and the active seat can be highlighted.
 
-use pkcore::casino::table_no_cell::{SeatNoCell, TableNoCell};
+use pkcore::casino::table::{Seat, Table};
 use pkcore::play::hole_card::HoleCard;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
@@ -282,7 +282,7 @@ struct SeatRow {
 }
 
 fn seat_rows<F: Fn(u8) -> String>(
-    table: &TableNoCell,
+    table: &Table,
     hero_seat: Option<u8>,
     active_seat: Option<u8>,
     showdown: Option<&[ShowdownSeat]>,
@@ -364,7 +364,7 @@ fn seat_rows<F: Fn(u8) -> String>(
 /// other players. For NLHE/PLO where every card is face-down, opponents
 /// see `[??]` (unchanged from before) and the owner sees the sorted
 /// display (also unchanged).
-fn format_hole(seat: &SeatNoCell, as_owner: bool) -> String {
+fn format_hole(seat: &Seat, as_owner: bool) -> String {
     let hand_slice = seat.hand.as_slice();
     let any_up = hand_slice.iter().any(HoleCard::is_up);
 
@@ -629,7 +629,7 @@ fn status_active_holes(status: &TableStatus) -> Vec<(u8, String)> {
 /// Collects `(seat_index, "card card")` for every seat still in the hand
 /// that holds exactly two cards (Hold'em). Seats that are empty, folded, or
 /// hold a non-2-card hand are skipped.
-fn active_holes(table: &TableNoCell) -> Vec<(u8, String)> {
+fn active_holes(table: &Table) -> Vec<(u8, String)> {
     let n = u8::try_from(table.seats.0.len()).unwrap_or(u8::MAX);
     (0..n)
         .filter_map(|i| {
@@ -671,7 +671,7 @@ fn apply_odds(
     }
 }
 
-fn render_board(table: &TableNoCell, paused: bool, frame: &mut Frame, area: Rect) {
+fn render_board(table: &Table, paused: bool, frame: &mut Frame, area: Rect) {
     let has_board = table.game.family().uses_community_board();
     let pot = table.effective_pot();
     let phase = format!("{:?}", table.phase);
@@ -741,11 +741,11 @@ fn position_tag(seat: u8, btn: u8, sb: u8, bb: u8) -> Option<&'static str> {
 mod tests {
     use super::*;
     use pkcore::card::Card;
-    use pkcore::casino::table_no_cell::PlayerNoCell;
+    use pkcore::casino::table::Player;
 
-    fn seat_with(downs: &[Card], ups: &[Card]) -> SeatNoCell {
+    fn seat_with(downs: &[Card], ups: &[Card]) -> Seat {
         use std::str::FromStr;
-        let mut s = SeatNoCell::new(PlayerNoCell::new_with_chips("X".to_string(), 1_000));
+        let mut s = Seat::new(Player::new_with_chips("X".to_string(), 1_000));
         // Mirror the dealt cards into the legacy `cards: BoxedCards` storage so
         // `cards.has_cards()` and the NLHE-hero sorted_display path both work.
         let joined = downs
@@ -811,7 +811,7 @@ mod tests {
         use pkcore::bot::profile::BotProfile;
         use pkcore::casino::action::PlayerAction;
         use pkcore::casino::session::{PokerSession, SessionStep};
-        use pkcore::casino::table_no_cell::{SeatsNoCell, TableNoCell};
+        use pkcore::casino::table::{Seats, Table};
         use rand::SeedableRng;
         use rand::rngs::SmallRng;
         use rand::seq::SliceRandom;
@@ -827,11 +827,11 @@ mod tests {
             "maniac",
             "loose_aggressive",
         ];
-        let seats: Vec<SeatNoCell> = names
+        let seats: Vec<Seat> = names
             .iter()
-            .map(|n| SeatNoCell::new(PlayerNoCell::new_with_chips((*n).to_string(), 10_000)))
+            .map(|n| Seat::new(Player::new_with_chips((*n).to_string(), 10_000)))
             .collect();
-        let table = TableNoCell::stud_hi_from_seats(SeatsNoCell::new(seats), 10, 25, 50, 100);
+        let table = Table::stud_hi_from_seats(Seats::new(seats), 10, 25, 50, 100);
         let mut session = PokerSession::new(table);
         session.start_hand().unwrap();
 
@@ -1000,7 +1000,7 @@ mod tests {
         // the hand doesn't cover. For a 6-card stud-style row, position 5
         // (the 6th card) should default to face-up.
         use std::str::FromStr;
-        let mut s = SeatNoCell::new(PlayerNoCell::new_with_chips("X".to_string(), 1_000));
+        let mut s = Seat::new(Player::new_with_chips("X".to_string(), 1_000));
         s.cards = pkcore::arrays::sliced::BoxedCards::from_str("5♠ 4♥ 7♥ K♦ 2♠ 9♣").unwrap();
         // Push only 5 entries into the hand (simulating the observed
         // pkcore short-hand state): 2 down + 3 up.
@@ -1147,15 +1147,14 @@ mod tests {
     #[test]
     fn active_holes_collects_two_card_seats() {
         use pkcore::casino::game::ForcedBets;
-        use pkcore::casino::table_no_cell::{PlayerNoCell, SeatNoCell, SeatsNoCell, TableNoCell};
+        use pkcore::casino::table::{Player, Seat, Seats, Table};
         use std::str::FromStr;
 
-        let mut s0 = SeatNoCell::new(PlayerNoCell::new_with_chips("a".into(), 1_000));
+        let mut s0 = Seat::new(Player::new_with_chips("a".into(), 1_000));
         s0.cards = pkcore::arrays::sliced::BoxedCards::from_str("As Ah").unwrap();
-        let mut s1 = SeatNoCell::new(PlayerNoCell::new_with_chips("b".into(), 1_000));
+        let mut s1 = Seat::new(Player::new_with_chips("b".into(), 1_000));
         s1.cards = pkcore::arrays::sliced::BoxedCards::from_str("Ks Kh").unwrap();
-        let table =
-            TableNoCell::nlh_from_seats(SeatsNoCell::new(vec![s0, s1]), ForcedBets::new(10, 20));
+        let table = Table::nlh_from_seats(Seats::new(vec![s0, s1]), ForcedBets::new(10, 20));
 
         let holes = active_holes(&table);
         assert_eq!(holes.len(), 2);
