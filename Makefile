@@ -1,4 +1,4 @@
-.PHONY: default help clean build test build_test fmt clippy update tree tree-duplicates deny audit unused-deps create_docs docs install-tools watch install-watch ayce spectate
+.PHONY: default help clean build test build_test fmt clippy update tree tree-duplicates deny audit unused-deps create_docs docs install-tools watch install-watch ayce spectate validate-okf
 
 CRATE_NAME := $(shell grep '^name' Cargo.toml 2>/dev/null | head -1 | sed 's/.*"\(.*\)".*/\1/' | tr '-' '_')
 
@@ -32,6 +32,7 @@ help:
 	@echo "Documentation:"
 	@echo "  make create_docs     - Create documentation"
 	@echo "  make docs            - Create docs and open in browser (macOS/Linux)"
+	@echo "  make validate-okf    - Check the .okf/ knowledge bundle is OKF-conformant"
 	@echo ""
 	@echo "Tooling:"
 	@echo "  make install-tools   - Install cargo-deny, cargo-udeps, and cargo-watch"
@@ -119,6 +120,12 @@ docs: create_docs
 		exit 1; \
 	fi
 
+# Validate the .okf/ knowledge bundle for OKF v0.1 conformance.
+# Uses a vendored, dependency-free checker so CI needs no okf plugin/skill.
+validate-okf:
+	@echo "Validating .okf/ knowledge bundle..."
+	python3 scripts/okf-validate.py .okf --strict
+
 # Install required tools
 install-tools:
 	@echo "Installing development tools..."
@@ -139,4 +146,4 @@ install-watch:
 
 
 # All You Can Eat - Run all checks
-ayce: fmt build_test clippy deny create_docs
+ayce: fmt build_test clippy deny create_docs validate-okf
