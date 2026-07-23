@@ -221,6 +221,29 @@ impl std::fmt::Display for MyError {
 impl std::error::Error for MyError {}
 ```
 
+## Knowledge Bundle (OKF)
+
+This repo carries an [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+bundle at `.okf/` — a directory of markdown-plus-YAML concept files describing the
+crate's architecture, modes, UI, config, and design decisions. It is
+knowledge-as-code: committed alongside the source it documents.
+
+- **Consume it first.** When answering a question about how pktui is structured
+  or works, read `.okf/index.md` for progressive disclosure, then follow links
+  into the relevant concepts before spelunking through `src/`.
+- **Keep it in sync.** When a change affects a documented area (a mode, a UI
+  module, the CLI, an architectural decision), update the matching concept file
+  and its `timestamp`, and append a dated entry to `.okf/log.md` in the same
+  pass. Add a new concept for a genuinely new subsystem.
+- **Stay conformant.** Every non-reserved `.md` file needs YAML frontmatter with
+  a non-empty `type`. Validate before committing bundle changes:
+  ```bash
+  # via the okf validate skill, or the checker directly:
+  uv run <okf>/skills/validate/scripts/okf_validate.py .okf --strict
+  ```
+- The `okf` skill (invoked with `/okf:okf`) drives produce / maintain / consume
+  workflows over the bundle.
+
 ## References
 
 - [Rust API Guidelines](https://rust-lang.github.io/api-guidelines/)
@@ -228,4 +251,5 @@ impl std::error::Error for MyError {}
 - [Rust by Example: Documentation](https://doc.rust-lang.org/rust-by-example/meta/doc.html)
 - [Writing Unsafe Rust](https://doc.rust-lang.org/book/ch19-01-unsafe-rust.html)
 - [Effective Rust](https://effective-rust.dev/)
+- [Open Knowledge Format (OKF) spec](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md) — the format of the `.okf/` bundle
 
