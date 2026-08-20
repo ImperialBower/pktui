@@ -816,6 +816,11 @@ mod tests {
         use rand::rngs::SmallRng;
         use rand::seq::SliceRandom;
 
+        // Six seats — `Variant::StudHi::max_seats()`. Stud deals seven cards
+        // per player, so a 52-card deck cannot serve more than six through
+        // 7th street. Seating more makes pkcore reject the deal part-way
+        // down the streets, which this test's fold-on-error fallback turns
+        // into an intermittent "never reached 6th street" failure.
         let names = [
             "You",
             "abc",
@@ -823,9 +828,6 @@ mod tests {
             "loose_passive",
             "gto",
             "short_stack_ninja",
-            "joker",
-            "maniac",
-            "loose_aggressive",
         ];
         let seats: Vec<Seat> = names
             .iter()
