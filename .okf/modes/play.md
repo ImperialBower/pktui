@@ -4,13 +4,15 @@ title: Play mode
 description: One human at seat 0 vs eight bots; owns the live PokerSession, bot roster, RNG, and the bet-amount field.
 resource: https://github.com/ImperialBower/pktui/blob/main/src/modes/play.rs
 tags: [mode, play, interactive]
-timestamp: '2026-07-22T00:00:00Z'
+timestamp: '2026-08-21T00:00:00Z'
 ---
 
 # Role
 
 Play is the default mode (`pktui play`, or no subcommand). A human sits at
-seat 0; seats 1–8 (or 1–5 for stud) are bots.
+seat 0; seats 1–8 (or 1–7 for stud) are bots. The count comes from
+`Variant::max_seats`, so it follows the [CLI](/config/cli.md) rather than being
+fixed in the mode.
 
 # State (`PlayState`)
 
@@ -20,6 +22,16 @@ the user adjusts before confirming a bet or raise.
 
 * `Awaiting::Human` — the loop pauses for the human's action.
 * Bots act one per [tick](/architecture/event-loop.md).
+
+# Aborted hands
+
+`PokerSession::next_step` returns `SessionStep::Failed(PKError)` when a deal or
+a chip collection fails part-way through a hand. There was no showdown, so
+`end_hand` would refuse to resolve it. The tick loop logs the error, calls
+`PokerSession::abort_hand` — which returns every committed chip to the stack it
+came from — then advances the button and settles into `Awaiting::HandComplete`
+or `Awaiting::SessionOver` exactly as a normal hand end would.
+[Arena](/modes/arena.md) handles the same step identically.
 
 # Interaction
 

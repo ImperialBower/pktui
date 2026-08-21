@@ -51,10 +51,15 @@ pub enum Variant {
 impl Variant {
     /// Maximum number of seats supported by this variant.
     ///
-    /// Stud-family games deal 7 cards per player. The 52-card deck would
-    /// technically seat 8 (8 × 7 = 56 with a card-recycle), but pktui caps
-    /// at 6 to keep the table playable and the deck comfortable.
-    /// NLHE / PLO use community cards, so they comfortably seat 9.
+    /// Stud-family games deal 7 cards per player, so eight players need 56
+    /// cards and the deck holds 52. pkcore 0.6.0 resolves that the way the
+    /// rulebook does: when the stub cannot serve everyone on 7th street the
+    /// dealer turns a single face-up community card that every remaining
+    /// player counts as their seventh. Eight is therefore the true ceiling
+    /// (`Table::MAX_STUD_SEATS`) — nine runs dry two streets earlier, where no
+    /// community card can rescue it, and pkcore rejects it outright.
+    ///
+    /// NLHE / PLO use community cards throughout, so they comfortably seat 9.
     ///
     /// # Examples
     ///
@@ -62,14 +67,14 @@ impl Variant {
     /// use pktui::cli::Variant;
     /// assert_eq!(Variant::Nlhe.max_seats(), 9);
     /// assert_eq!(Variant::Plo.max_seats(), 9);
-    /// assert_eq!(Variant::StudHi.max_seats(), 6);
-    /// assert_eq!(Variant::Razz.max_seats(), 6);
+    /// assert_eq!(Variant::StudHi.max_seats(), 8);
+    /// assert_eq!(Variant::Razz.max_seats(), 8);
     /// ```
     #[must_use]
     pub fn max_seats(self) -> usize {
         match self {
             Self::Nlhe | Self::Plo => 9,
-            Self::StudHi | Self::Razz => 6,
+            Self::StudHi | Self::Razz => 8,
         }
     }
 }

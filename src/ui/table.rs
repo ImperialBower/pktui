@@ -816,11 +816,12 @@ mod tests {
         use rand::rngs::SmallRng;
         use rand::seq::SliceRandom;
 
-        // Six seats — `Variant::StudHi::max_seats()`. Stud deals seven cards
-        // per player, so a 52-card deck cannot serve more than six through
-        // 7th street. Seating more makes pkcore reject the deal part-way
-        // down the streets, which this test's fold-on-error fallback turns
-        // into an intermittent "never reached 6th street" failure.
+        // Eight seats — `Variant::StudHi::max_seats()`, which is pkcore's
+        // `Table::MAX_STUD_SEATS`. Eight players need 56 cards for seven
+        // streets and the deck holds 52; pkcore 0.6.0 covers the shortfall
+        // with a single face-up community card on 7th street, so a full stud
+        // field runs to showdown. Before 0.6.0 the deal ran dry mid-street and
+        // this test was capped at six to stay deterministic.
         let names = [
             "You",
             "abc",
@@ -828,12 +829,14 @@ mod tests {
             "loose_passive",
             "gto",
             "short_stack_ninja",
+            "joker",
+            "maniac",
         ];
         let seats: Vec<Seat> = names
             .iter()
             .map(|n| Seat::new(Player::new_with_chips((*n).to_string(), 10_000)))
             .collect();
-        let table = Table::stud_hi_from_seats(Seats::new(seats), 10, 25, 50, 100);
+        let table = Table::stud_hi_from_seats(Seats::new(seats), 10, 25, 50, 100).unwrap();
         let mut session = PokerSession::new(table);
         session.start_hand().unwrap();
 
@@ -905,6 +908,7 @@ mod tests {
                     }
                 }
                 SessionStep::HandComplete => break,
+                SessionStep::Failed(e) => panic!("hand failed before 6th street: {e}"),
             }
         }
         assert!(reached_6th, "never reached 6th street in 1000 steps");
@@ -962,6 +966,7 @@ mod tests {
                 }
                 SessionStep::StreetAdvanced => {}
                 SessionStep::HandComplete => panic!("hand ended before 6th street"),
+                SessionStep::Failed(e) => panic!("hand failed before 6th street: {e}"),
             }
         }
         assert_eq!(state.session.table.phase, GamePhase::Stud6th);

@@ -242,27 +242,40 @@ pub struct PlayState {
 /// `--small-bet`/`--big-bet` aren't supplied for Stud, they fall back to
 /// `--small-blind`/`--big-blind` so the existing CLI defaults still produce
 /// a playable table.
-fn build_table(args: &PlayArgs, seats: Seats) -> Table {
+///
+/// # Errors
+///
+/// Returns [`Error::Engine`](crate::Error::Engine) if pkcore rejects the seat
+/// layout. Only the stud variants can fail: seven-card stud deals seven cards
+/// per player, and a 52-card deck cannot serve more than
+/// `Table::MAX_STUD_SEATS` (8) of them, so a larger field is refused with
+/// `PKError::TooManyPlayers`.
+fn build_table(args: &PlayArgs, seats: Seats) -> Result<Table> {
     match args.game.variant {
-        Variant::Nlhe => Table::nlh_from_seats(
+        Variant::Nlhe => Ok(Table::nlh_from_seats(
             seats,
             ForcedBets::new(args.game.small_blind, args.game.big_blind),
-        ),
-        Variant::Plo => Table::plo_from_seats(seats, (args.game.small_blind, args.game.big_blind)),
+        )),
+        Variant::Plo => Ok(Table::plo_from_seats(
+            seats,
+            (args.game.small_blind, args.game.big_blind),
+        )),
         Variant::StudHi => Table::stud_hi_from_seats(
             seats,
             args.game.ante.unwrap_or(10),
             args.game.bring_in.unwrap_or(25),
             args.game.small_bet.unwrap_or(args.game.small_blind),
             args.game.big_bet.unwrap_or(args.game.big_blind),
-        ),
+        )
+        .map_err(Into::into),
         Variant::Razz => Table::razz_from_seats(
             seats,
             args.game.ante.unwrap_or(10),
             args.game.bring_in.unwrap_or(25),
             args.game.small_bet.unwrap_or(args.game.small_blind),
             args.game.big_bet.unwrap_or(args.game.big_blind),
-        ),
+        )
+        .map_err(Into::into),
     }
 }
 
@@ -338,7 +351,7 @@ impl PlayState {
             )));
         }
 
-        let table = build_table(args, Seats::new(seats));
+        let table = build_table(args, Seats::new(seats))?;
 
         let mut session = PokerSession::new(table);
         session.start_hand()?;
@@ -411,6 +424,54 @@ impl PlayState {
     #[must_use]
     pub fn hero_to_act(&self) -> bool {
         matches!(self.awaiting, Awaiting::Human(s) if s == HERO_SEAT)
+    }
+    /// Closes out a finished or aborted hand and decides what happens next.
+    ///
+    /// Both endings share the same housekeeping: move the button, drop every
+    /// seat that ran out of chips, and then either park in
+    /// [`Awaiting::HandComplete`] to wait for the human's Enter, or in
+    /// [`Awaiting::SessionOver`] when the game cannot continue. The session
+    /// ends when fewer than two funded seats remain, or when the hero's own
+    /// seat is empty or broke — the human has nothing left to play with.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pktui::cli::PlayArgs;
+    /// use pktui::log_panel::LogPanel;
+    /// use pktui::modes::{Awaiting, PlayState};
+    ///
+    /// let mut log = LogPanel::new();
+    /// let mut args = PlayArgs::default();
+    /// args.game.seed = Some(7);
+    /// let mut state = PlayState::new(&args, &mut log).unwrap();
+    /// // A fresh nine-handed table has plenty of funded seats, so the
+    /// // session continues and simply waits for the next hand.
+    /// state.settle_between_hands(&mut log);
+    /// assert!(matches!(state.awaiting, Awaiting::HandComplete));
+    /// ```
+    pub fn settle_between_hands(&mut self, log: &mut LogPanel) {
+        self.session.table.button_up();
+        let busted = self.session.eliminate_busted();
+        for seat in busted {
+            log.push(
+                Severity::Error,
+                format!("{} eliminated", self.seat_name(seat)),
+            );
+        }
+        let hero_is_out = self
+            .session
+            .table
+            .seats
+            .get_seat(HERO_SEAT)
+            .is_none_or(|s| s.is_empty() || s.player.chips == 0);
+        if self.session.count_funded() < 2 || hero_is_out {
+            self.awaiting = Awaiting::SessionOver;
+            log.push(Severity::Info, "Session over. Press q to quit.".to_string());
+        } else {
+            self.awaiting = Awaiting::HandComplete;
+            log.push(Severity::Info, "Press Enter for next hand.".to_string());
+        }
     }
 
     /// Drives the engine forward by one [`SessionStep`] and updates
@@ -496,25 +557,22 @@ impl PlayState {
                         }
                     }
                 }
-                self.session.table.button_up();
-                let busted = self.session.eliminate_busted();
-                for s in busted {
-                    log.push(Severity::Error, format!("{} eliminated", self.seat_name(s)));
-                }
-                if self.session.count_funded() < 2
-                    || self
-                        .session
-                        .table
-                        .seats
-                        .get_seat(HERO_SEAT)
-                        .is_none_or(|s| s.is_empty() || s.player.chips == 0)
-                {
-                    self.awaiting = Awaiting::SessionOver;
-                    log.push(Severity::Info, "Session over. Press q to quit.".to_string());
-                } else {
-                    self.awaiting = Awaiting::HandComplete;
-                    log.push(Severity::Info, "Press Enter for next hand.".to_string());
-                }
+                self.settle_between_hands(log);
+                Ok(true)
+            }
+            SessionStep::Failed(e) => {
+                // The deal or a chip collection failed mid-hand. There is no
+                // showdown to resolve, so `end_hand` would refuse; `abort_hand`
+                // returns every committed chip to the stack it came from and
+                // resets the table (pkcore DEFECT_019).
+                log.push(Severity::Error, format!("Hand aborted: {e}"));
+                let returned = self.session.abort_hand()?;
+                log.push(
+                    Severity::Info,
+                    format!("{returned} chips returned to their stacks"),
+                );
+                self.last_showdown = None;
+                self.settle_between_hands(log);
                 Ok(true)
             }
         }
@@ -840,14 +898,14 @@ mod tests {
     }
 
     #[test]
-    fn new_stud_hi_seats_six_players_and_logs_warning() {
+    fn new_stud_hi_seats_eight_players_and_logs_warning() {
         let mut log = LogPanel::new();
         let mut args = PlayArgs::default();
         args.game.seed = Some(7);
         args.game.variant = Variant::StudHi;
         let s = PlayState::new(&args, &mut log).unwrap();
-        assert_eq!(s.bots.len(), 5);
-        assert_eq!(s.session.table.seats.0.len(), 6);
+        assert_eq!(s.bots.len(), 7);
+        assert_eq!(s.session.table.seats.0.len(), 8);
         let logged: String = log
             .iter()
             .map(|line| line.text.clone())
@@ -878,6 +936,53 @@ mod tests {
         assert_eq!(s.seat_name(0), "You");
         assert_eq!(s.seat_name(1), s.bots[0].name);
         assert_eq!(s.seat_name(8), s.bots[7].name);
+    }
+
+    #[test]
+    fn settle_between_hands_waits_for_next_hand_while_seats_are_funded() {
+        let mut log = LogPanel::new();
+        let mut s = play_with_seed(4);
+        s.awaiting = Awaiting::Bot;
+        s.settle_between_hands(&mut log);
+        assert!(matches!(s.awaiting, Awaiting::HandComplete));
+        let text: String = log
+            .iter()
+            .map(|line| line.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            text.contains("Press Enter for next hand."),
+            "log was: {text}"
+        );
+    }
+
+    #[test]
+    fn settle_between_hands_ends_the_session_when_the_hero_is_broke() {
+        let mut log = LogPanel::new();
+        let mut s = play_with_seed(5);
+        // Zero the hero's stack: the human has nothing left to play with, so
+        // the session is over regardless of how many bots are still funded.
+        if let Some(hero) = s.session.table.seats.get_seat_mut(HERO_SEAT) {
+            hero.player.chips = 0;
+        }
+        s.awaiting = Awaiting::Bot;
+        s.settle_between_hands(&mut log);
+        assert!(matches!(s.awaiting, Awaiting::SessionOver));
+        let text: String = log
+            .iter()
+            .map(|line| line.text.clone())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(text.contains("Session over."), "log was: {text}");
+    }
+
+    #[test]
+    fn settle_between_hands_advances_the_button() {
+        let mut log = LogPanel::new();
+        let mut s = play_with_seed(6);
+        let before = s.session.table.button;
+        s.settle_between_hands(&mut log);
+        assert_ne!(before, s.session.table.button);
     }
 
     #[test]

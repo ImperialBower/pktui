@@ -4,7 +4,7 @@ title: Arena mode
 description: All-bot, watch-only table; identical to Play except seat 0 is a bot and the user only controls speed and quit.
 resource: https://github.com/ImperialBower/pktui/blob/main/src/modes/arena.rs
 tags: [mode, arena, watch-only]
-timestamp: '2026-07-22T00:00:00Z'
+timestamp: '2026-08-21T00:00:00Z'
 ---
 
 # Role
@@ -21,6 +21,12 @@ the auto-advancing table is in the hand cycle. The user controls only:
 * `+` / `-` — adjust bot speed (the [tick](/architecture/event-loop.md)
   interval, also settable via `--speed-ms`).
 * quit.
+
+# Aborted hands
+
+Arena's step loop handles `SessionStep::Failed(PKError)` the same way Play does
+— log, `abort_hand`, then carry on with the next hand. See
+[Play mode](/modes/play.md).
 
 # Odds
 

@@ -63,27 +63,37 @@ pub struct ArenaState {
 }
 
 /// Mirrors `play::build_table` for arena's args struct.
-fn build_table(args: &ArenaArgs, seats: Seats) -> Table {
+///
+/// # Errors
+///
+/// Returns [`Error::Engine`](crate::Error::Engine) if pkcore rejects the seat
+/// layout — see `play::build_table` for the stud seat limit that causes it.
+fn build_table(args: &ArenaArgs, seats: Seats) -> Result<Table> {
     match args.game.variant {
-        Variant::Nlhe => Table::nlh_from_seats(
+        Variant::Nlhe => Ok(Table::nlh_from_seats(
             seats,
             ForcedBets::new(args.game.small_blind, args.game.big_blind),
-        ),
-        Variant::Plo => Table::plo_from_seats(seats, (args.game.small_blind, args.game.big_blind)),
+        )),
+        Variant::Plo => Ok(Table::plo_from_seats(
+            seats,
+            (args.game.small_blind, args.game.big_blind),
+        )),
         Variant::StudHi => Table::stud_hi_from_seats(
             seats,
             args.game.ante.unwrap_or(10),
             args.game.bring_in.unwrap_or(25),
             args.game.small_bet.unwrap_or(args.game.small_blind),
             args.game.big_bet.unwrap_or(args.game.big_blind),
-        ),
+        )
+        .map_err(Into::into),
         Variant::Razz => Table::razz_from_seats(
             seats,
             args.game.ante.unwrap_or(10),
             args.game.bring_in.unwrap_or(25),
             args.game.small_bet.unwrap_or(args.game.small_blind),
             args.game.big_bet.unwrap_or(args.game.big_blind),
-        ),
+        )
+        .map_err(Into::into),
     }
 }
 
@@ -149,7 +159,7 @@ impl ArenaState {
             .map(|b| Seat::new(Player::new_with_chips(b.name.clone(), args.game.chips)))
             .collect();
 
-        let table = build_table(args, Seats::new(seats));
+        let table = build_table(args, Seats::new(seats))?;
 
         let mut session = PokerSession::new(table);
         session.start_hand()?;
@@ -366,6 +376,30 @@ impl ArenaState {
                 self.last_step_at = Instant::now();
                 Ok(true)
             }
+            SessionStep::Failed(e) => {
+                // No showdown happened, so `end_hand` would refuse. `abort_hand`
+                // unwinds the hand, returning every committed chip to the stack
+                // it came from (pkcore DEFECT_019).
+                log.push(Severity::Error, format!("Hand aborted: {e}"));
+                let returned = self.session.abort_hand()?;
+                log.push(
+                    Severity::Info,
+                    format!("{returned} chips returned to their stacks"),
+                );
+                self.session.table.button_up();
+                let busted = self.session.eliminate_busted();
+                for s in busted {
+                    log.push(Severity::Error, format!("{} eliminated", self.seat_name(s)));
+                }
+                if self.session.count_funded() < 2 {
+                    log.push(Severity::Info, "Arena over. Press q to quit.".to_string());
+                    self.phase = ArenaPhase::SessionOver;
+                } else {
+                    self.phase = ArenaPhase::HandComplete;
+                }
+                self.last_step_at = Instant::now();
+                Ok(true)
+            }
         }
     }
 }
@@ -406,13 +440,13 @@ mod tests {
     }
 
     #[test]
-    fn new_stud_hi_seats_six_bots_and_logs_warning() {
+    fn new_stud_hi_seats_eight_bots_and_logs_warning() {
         let mut log = LogPanel::new();
         let mut args = ArenaArgs::default();
         args.game.seed = Some(8);
         args.game.variant = Variant::StudHi;
         let s = ArenaState::new(&args, &mut log).unwrap();
-        assert_eq!(s.session.table.seats.0.len(), 6);
+        assert_eq!(s.session.table.seats.0.len(), 8);
         let logged: String = log
             .iter()
             .map(|line| line.text.clone())
