@@ -10,12 +10,23 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 > below are ordered by release date (newest first), so `0.1.0` appears last even
 > though it sorts highest.
 
-## [Unreleased]
+## [0.0.7] - 2026-08-21
+
+Tracks the `pkcore` engine from `0.2.1` up to `0.6.0`, and lifts the stud seat
+cap that the older engine forced.
+
+### Added
+
+- **`PlayState::settle_between_hands`** — closes out a finished or aborted hand:
+  moves the button, drops busted seats, then parks in `Awaiting::HandComplete`
+  or `Awaiting::SessionOver`. Extracted from the two hand-ending paths in
+  `PlayState::tick`, which had carried the same block twice.
 
 ### Changed
 
-- **Requires `pkcore 0.6.0`** (was `0.5.0`). Two of its breaking changes reach
-  pktui:
+- **Requires `pkcore 0.6.0`** (was `0.2.1` in `0.0.6`; `0.5.0` was an
+  intermediate step within this same unreleased line). Two of its breaking
+  changes reach pktui:
   - `Table::stud_hi_from_seats` and `Table::razz_from_seats` are now fallible,
     so `build_table` in Play and Arena returns `Result<Table>` and the seat
     layout is validated by the engine instead of by pktui's own guess.
@@ -32,6 +43,10 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
   card on 7th street when the stub cannot serve everyone. Nine remains
   impossible and the engine rejects it. `pktui play --variant stud-hi` now
   seats the hero plus 7 bots; `arena` seats 8.
+
+## [0.0.6] - 2026-07-13
+
+Version-only bump; no code, dependency, or documentation changes.
 
 ## [0.0.5] - 2026-07-07
 
