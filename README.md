@@ -15,12 +15,12 @@ table for a ratatui one.
 cargo run --release                                # default: Play / NLHE (you vs 8 bots)
 cargo run --release -- play                        # same as above, explicit
 cargo run --release -- play --variant plo          # Pot-Limit Omaha (you vs 8 bots)
-cargo run --release -- play --variant stud-hi      # 7-card Stud Hi (you vs 5 bots)
-cargo run --release -- play --variant razz         # 7-card Razz lowball (you vs 5 bots)
+cargo run --release -- play --variant stud-hi      # 7-card Stud Hi (you vs 7 bots)
+cargo run --release -- play --variant razz         # 7-card Razz lowball (you vs 7 bots)
 cargo run --release -- arena --speed-ms 400        # all-bot NLHE
 cargo run --release -- arena --variant plo         # all-bot PLO (9 bots)
-cargo run --release -- arena --variant stud-hi     # all-bot Stud Hi (6 bots)
-cargo run --release -- arena --variant razz        # all-bot Razz (6 bots)
+cargo run --release -- arena --variant stud-hi     # all-bot Stud Hi (8 bots)
+cargo run --release -- arena --variant razz        # all-bot Razz (8 bots)
 cargo run --release -- replay path/to/session.yaml # step through saved hand history
 cargo run --release -- spectate                          # watch a live pkdealer table (http://localhost:50051)
 cargo run --release -- spectate --endpoint http://host:50051
@@ -32,11 +32,14 @@ cargo run --release -- spectate --endpoint http://host:50051
 |-----------|------------------|-----------|------------|-------------|
 | NLHE      | `nlhe` (default) | 9         | 1 hero + 8 bots | 9 bots |
 | PLO       | `plo`            | 9         | 1 hero + 8 bots | 9 bots |
-| Stud Hi   | `stud-hi`        | 6         | 1 hero + 5 bots | 6 bots |
-| Razz      | `razz`           | 6         | 1 hero + 5 bots | 6 bots |
+| Stud Hi   | `stud-hi`        | 8         | 1 hero + 7 bots | 8 bots |
+| Razz      | `razz`           | 8         | 1 hero + 7 bots | 8 bots |
 
-Stud-family variants are capped at 6 seats to keep the 52-card deck
-comfortable across 7 streets of dealing.
+Stud-family variants are capped at 8 seats — pkcore's `Table::MAX_STUD_SEATS`.
+Eight players need 56 cards across 7 streets and the deck holds 52, so when the
+stub runs short on 7th street the dealer turns a single face-up community card
+that every remaining player counts as their seventh. Nine runs dry two streets
+earlier, which no community card can rescue, so the engine rejects it.
 
 ### Forced-bet flags by variant
 
@@ -70,8 +73,8 @@ section to build against the published crate exclusively.
 
 | Mode     | Subcommand                      | Description                                          |
 |----------|---------------------------------|------------------------------------------------------|
-| Play     | `pktui play`                    | One human at seat 0; bots at the remaining seats. NLHE seats 8 bots, stud-family seats 5. |
-| Arena    | `pktui arena`                   | Bots only, watch-only. NLHE seats 9, stud-family seats 6. Use `+` / `-` to adjust pace. |
+| Play     | `pktui play`                    | One human at seat 0; bots at the remaining seats. NLHE seats 8 bots, stud-family seats 7. |
+| Arena    | `pktui arena`                   | Bots only, watch-only. NLHE seats 9, stud-family seats 8. Use `+` / `-` to adjust pace. |
 | Replay   | `pktui replay <FILE>`           | Step through a saved `HandCollection` YAML file.     |
 | Spectate | `pktui spectate [--endpoint …]` | Read-only live viewer of a running `pkdealer` table. |
 

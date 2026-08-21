@@ -4,7 +4,7 @@ title: pktui — overview
 description: A ratatui terminal client for the pkcore poker engine, with Play, Arena, Replay, and Spectate modes.
 resource: https://github.com/ImperialBower/pktui
 tags: [overview, ratatui, poker, tui]
-timestamp: '2026-07-22T00:00:00Z'
+timestamp: '2026-08-21T00:00:00Z'
 ---
 
 # What pktui is
@@ -44,11 +44,16 @@ pktui is built around an Elm-style loop — see [the Elm loop](/architecture/elm
 |---------|-------------|-----------|--------|
 | NLHE    | `nlhe` (default) | 9 | Hold'em |
 | PLO     | `plo`       | 9 | Hold'em |
-| Stud Hi | `stud-hi`   | 6 | Stud |
-| Razz    | `razz`      | 6 | Stud |
+| Stud Hi | `stud-hi`   | 8 | Stud |
+| Razz    | `razz`      | 8 | Stud |
 
-Stud-family variants are capped at 6 seats so the 52-card deck stays comfortable
-across 7 streets. Per-street Win% display (see
+Stud-family variants are capped at 8 seats, which is pkcore's
+`Table::MAX_STUD_SEATS`. Eight players need 56 cards across 7 streets and the
+deck holds 52; pkcore 0.6.0 covers the shortfall the way the rulebook does, by
+turning a single face-up community card on 7th street that every remaining
+player counts as their seventh. Nine runs dry two streets earlier, where no
+community card can rescue it, so pkcore rejects a nine-handed stud table
+outright. Per-street Win% display (see
 [street odds](/decisions/street-odds-display.md)) is Hold'em-only.
 
 # Citations

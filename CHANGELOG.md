@@ -10,6 +10,44 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 > below are ordered by release date (newest first), so `0.1.0` appears last even
 > though it sorts highest.
 
+## [0.0.7] - 2026-08-21
+
+Tracks the `pkcore` engine from `0.2.1` up to `0.6.0`, and lifts the stud seat
+cap that the older engine forced.
+
+### Added
+
+- **`PlayState::settle_between_hands`** — closes out a finished or aborted hand:
+  moves the button, drops busted seats, then parks in `Awaiting::HandComplete`
+  or `Awaiting::SessionOver`. Extracted from the two hand-ending paths in
+  `PlayState::tick`, which had carried the same block twice.
+
+### Changed
+
+- **Requires `pkcore 0.6.0`** (was `0.2.1` in `0.0.6`; `0.5.0` was an
+  intermediate step within this same unreleased line). Two of its breaking
+  changes reach pktui:
+  - `Table::stud_hi_from_seats` and `Table::razz_from_seats` are now fallible,
+    so `build_table` in Play and Arena returns `Result<Table>` and the seat
+    layout is validated by the engine instead of by pktui's own guess.
+  - `SessionStep` gained a `Failed(PKError)` variant. Play and Arena now handle
+    it: they log the error, call the new `PokerSession::abort_hand` to return
+    every committed chip to the stack it came from, advance the button, and
+    settle into the normal between-hands state. Previously a mid-hand deal
+    failure was reported as `HandComplete`, which stranded the pot.
+
+- **Stud-family tables seat 8, up from 6** (`Variant::max_seats`). The 6-seat
+  cap was pktui's own workaround for pkcore's stud deck-exhaustion bug
+  (pkcore `DEFECT_018`, fixed in 0.6.0). Eight is now the engine's real ceiling
+  — `Table::MAX_STUD_SEATS` — because pkcore turns a single face-up community
+  card on 7th street when the stub cannot serve everyone. Nine remains
+  impossible and the engine rejects it. `pktui play --variant stud-hi` now
+  seats the hero plus 7 bots; `arena` seats 8.
+
+## [0.0.6] - 2026-07-13
+
+Version-only bump; no code, dependency, or documentation changes.
+
 ## [0.0.5] - 2026-07-07
 
 Completes **EPIC-44**: double-dummy per-street win% display.

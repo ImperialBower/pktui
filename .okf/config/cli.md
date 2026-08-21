@@ -4,7 +4,7 @@ title: Command-line interface
 description: clap-derive CLI with three subcommands (play/arena/replay) plus spectate, mapping to the UI modes; play is the default.
 resource: https://github.com/ImperialBower/pktui/blob/main/src/cli.rs
 tags: [config, cli, clap]
-timestamp: '2026-07-22T00:00:00Z'
+timestamp: '2026-08-21T00:00:00Z'
 ---
 
 # Role
@@ -25,8 +25,10 @@ pktui spectate [--endpoint http://host:50051]
 `Variant` (`nlhe` default, plus `plo`, `stud-hi`, `razz`) selects the game.
 For **stud-family** variants the `--ante` / `--bring-in` / `--small-bet` /
 `--big-bet` flags apply; for **hold'em-family** the blind flags apply.
-Irrelevant forced-bet flags are silently ignored for the chosen variant. Stud
-variants are capped at 6 seats.
+Irrelevant forced-bet flags are silently ignored for the chosen variant.
+`Variant::max_seats` caps stud variants at 8 seats (pkcore's
+`Table::MAX_STUD_SEATS`) and hold'em variants at 9; the modes derive their bot
+count from it rather than hard-coding a number.
 
 # Precedence
 

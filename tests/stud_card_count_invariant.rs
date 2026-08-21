@@ -26,14 +26,19 @@ fn make_session(stacks: usize) -> PokerSession {
         "short_stack_ninja",
         "joker",
         "maniac",
-        "loose_aggressive",
     ];
     let seats: Vec<Seat> = names
         .iter()
         .map(|n| Seat::new(Player::new_with_chips((*n).to_string(), stacks)))
         .collect();
     let _ = ForcedBets::new(0, 0);
-    let table = Table::stud_hi_from_seats(Seats::new(seats), 10, 25, 50, 100);
+    // Eight is `Table::MAX_STUD_SEATS`: seven streets for eight players need 56
+    // cards and the deck holds 52, so pkcore 0.6.0 turns one face-up community
+    // card on 7th street that everyone counts as their seventh. Nine runs dry
+    // two streets earlier, which no community card can rescue, so the
+    // constructor rejects it with `PKError::TooManyPlayers`.
+    let table = Table::stud_hi_from_seats(Seats::new(seats), 10, 25, 50, 100)
+        .expect("eight seats is within Table::MAX_STUD_SEATS");
     let mut session = PokerSession::new(table);
     session.start_hand().unwrap();
     session
@@ -127,11 +132,12 @@ fn hero_has_same_card_count_as_opponents_at_every_to_act_moment() {
                 assert_counts_balanced(&session, "StreetAdvanced");
             }
             SessionStep::HandComplete => return,
+            SessionStep::Failed(e) => panic!("hand failed mid-stream: {e}"),
         }
     }
 }
 
-/// Reproduces the pktui scenario from the bug report: 9 bot-driven seats
+/// Reproduces the pktui scenario from the bug report: 8 bot-driven seats
 /// playing Stud Hi with the seed used in the screenshot, asserting the
 /// card-count invariant at every `PlayerToAct`.
 #[test]
@@ -171,6 +177,7 @@ fn bot_driven_session_keeps_seat_card_counts_balanced() {
                 assert_counts_balanced(&session, &format!("StreetAdvanced step={step}"));
             }
             SessionStep::HandComplete => return,
+            SessionStep::Failed(e) => panic!("hand failed mid-stream: {e}"),
         }
     }
 }
@@ -317,6 +324,7 @@ fn every_in_hand_seat_has_same_card_count_each_street() {
                 }
             }
             SessionStep::HandComplete => return,
+            SessionStep::Failed(e) => panic!("hand failed mid-stream: {e}"),
         }
     }
 }
