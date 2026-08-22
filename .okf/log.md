@@ -13,3 +13,6 @@
 ## 2026-08-21
 * **Update**: Bumped pkcore `0.5.0` → `0.6.0`. Recorded the new `SessionStep::Failed` / `abort_hand` path in [Play](/modes/play.md) and [Arena](/modes/arena.md).
 * **Update**: Raised the stud seat cap from 6 to 8 (`Table::MAX_STUD_SEATS`) in [getting started](/getting-started.md) and the [CLI](/config/cli.md), now that pkcore deals a 7th-street community card when the stub runs short.
+
+## 2026-08-22
+* **Update**: Bumped pkcore `0.6.0` → `0.7.0`. No pktui source change: the release's breaking signatures (`next_actor`, `Deck::get`, `KuhnCfr::train`, `Terminal::receive_usize`, `HUPResult::from_sorted_heads_up`) are all on APIs pktui does not call. Dropped the pinned engine version from the stud seat-cap note in [getting started](/getting-started.md) so it stops drifting.

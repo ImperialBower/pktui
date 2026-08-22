@@ -10,9 +10,9 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 > below are ordered by release date (newest first), so `0.1.0` appears last even
 > though it sorts highest.
 
-## [0.0.7] - 2026-08-21
+## [0.0.7] - 2026-08-22
 
-Tracks the `pkcore` engine from `0.2.1` up to `0.6.0`, and lifts the stud seat
+Tracks the `pkcore` engine from `0.2.1` up to `0.7.0`, and lifts the stud seat
 cap that the older engine forced.
 
 ### Added
@@ -24,9 +24,9 @@ cap that the older engine forced.
 
 ### Changed
 
-- **Requires `pkcore 0.6.0`** (was `0.2.1` in `0.0.6`; `0.5.0` was an
-  intermediate step within this same unreleased line). Two of its breaking
-  changes reach pktui:
+- **Requires `pkcore 0.7.0`** (was `0.2.1` in `0.0.6`; `0.5.0` and `0.6.0` were
+  intermediate steps within this same unreleased line). Two breaking changes
+  from `0.6.0` reach pktui:
   - `Table::stud_hi_from_seats` and `Table::razz_from_seats` are now fallible,
     so `build_table` in Play and Arena returns `Result<Table>` and the seat
     layout is validated by the engine instead of by pktui's own guess.
@@ -35,6 +35,15 @@ cap that the older engine forced.
     every committed chip to the stack it came from, advance the button, and
     settle into the normal between-hands state. Previously a mid-hand deal
     failure was reported as `HandComplete`, which stranded the pot.
+
+  `0.7.0` broke five more signatures — `PokerSession::next_actor` returning
+  `Result<Option<u8>, PKError>`, `Deck::get` returning `Option<Card>`,
+  `KuhnCfr::train` and `Terminal::receive_usize` returning `Result`, and
+  `HUPResult::from_sorted_heads_up` becoming fallible with `TryFrom` replacing
+  `From<&SortedHeadsUp>` — but all of them land on APIs pktui does not call.
+  pktui drives the session through `next_step`/`SessionStep`, not the
+  `next_actor` loop, so it already had the error path `0.7.0` forces on the
+  lower-level callers.
 
 - **Stud-family tables seat 8, up from 6** (`Variant::max_seats`). The 6-seat
   cap was pktui's own workaround for pkcore's stud deck-exhaustion bug
