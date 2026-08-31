@@ -82,7 +82,7 @@ fn render_header(
             .map_or_else(|| "??".to_string(), crate::ui::sort_hole_cards);
         let win = eq.iter().find(|(s, _)| *s == p.seat).map_or_else(
             || "  —".to_string(),
-            |(_, e)| format!("  {:.1}%", e * 100.0),
+            |(_, e)| format!("  {:.0}%", e * 100.0),
         );
         lines.push(Line::raw(format!(
             "{:>4}  {:<22}  {:>5}  {:<14}{win}",

@@ -511,8 +511,9 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
         Constraint::Length(9),
         // Analysis: "A♠ A♥ K♦ Q♣ J♠ KingHighStraightFlush" ≈ 36 chars
         Constraint::Length(38),
-        // Win%: "100.0%" is 6 chars; pad to 7.
-        Constraint::Length(7),
+        // Win%: "100%" is 4 chars; pad to 5. Whole percent only — pkcore
+        // samples multiway preflop equity, so a decimal place would be noise.
+        Constraint::Length(5),
     ];
 
     let body: Vec<Row> = rows
@@ -575,7 +576,7 @@ fn render_seats(frame: &mut Frame, area: Rect, rows: &[SeatRow]) {
             };
             let odds_cell = match r.odds {
                 None => Cell::from("—").style(Style::default().fg(Color::DarkGray)),
-                Some(e) => Cell::from(format!("{:.1}%", e * 100.0)).style(
+                Some(e) => Cell::from(format!("{:.0}%", e * 100.0)).style(
                     Style::default()
                         .fg(Color::Green)
                         .add_modifier(Modifier::BOLD),
@@ -1148,7 +1149,10 @@ mod tests {
         let header: String = (0..170).map(|x| buffer[(x, 1)].symbol()).collect();
         assert!(header.contains("Win%"), "header: {header}");
         let body: String = (0..170).map(|x| buffer[(x, 2)].symbol()).collect();
-        assert!(body.contains("82.4%"), "body: {body}");
+        // Whole percent, so 0.824 rounds down to "82%" — the tenth pkcore's
+        // sampled multiway-preflop equity cannot honestly resolve is dropped.
+        assert!(body.contains("82%"), "body: {body}");
+        assert!(!body.contains("82.4%"), "no decimal place: {body}");
     }
 
     #[test]

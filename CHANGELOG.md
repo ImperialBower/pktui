@@ -10,6 +10,36 @@ and this project aims to follow [Semantic Versioning](https://semver.org/spec/v2
 > below are ordered by release date (newest first), so `0.1.0` appears last even
 > though it sorts highest.
 
+## [Unreleased]
+
+### Changed
+
+- **Requires `pkcore 0.11.0`** (was `0.7.0` in `0.0.7`). No pktui source change
+  was needed — the crate builds, clippy is clean, and all 224 tests pass — but
+  three items from the engine reach pktui:
+  - **`store` and `terminal` are no longer pkcore default features.** pktui
+    never asked for either, so the dependency tree loses bundled SQLite
+    (`rusqlite`, `libsqlite3-sys`, `zstd`), `termion`, and `pkstate` — 19
+    crates in all. Build time and supply-chain surface both drop.
+  - **`EquityOptions::max_samples` now defaults to 25,000, down from 100,000.**
+    This is a *silent* precision change. It reaches pktui through
+    [`OddsCache`](src/ui/odds.rs) → `Game::street_equities()`, but only on the
+    **multiway preflop** path (3–10 seats): heads-up preflop uses the exact
+    `SortedHeadsUp` lookup, and flop / turn / river enumerate exactly. Worst
+    case on that path is now ~0.7 pp instead of ~0.3 pp. `street_equities()`
+    takes no options, so raising the sample count would mean bypassing it;
+    pktui follows pkcore's guidance and drops the decimal place instead — see
+    below.
+  - **`TableManager` / `TableEvent` are deprecated** in pkcore and removed one
+    release later. pktui uses neither.
+
+- **The Win% column now renders a whole percent** (`82%`), not a tenth
+  (`82.4%`), in the [table view](src/ui/table.rs) and the
+  [replay view](src/ui/replay_view.rs). At pkcore `0.11.0`'s 25,000-sample
+  default, a tenth of a point is below the resolution of the multiway-preflop
+  estimate — the digit moved between redraws without the equity changing. The
+  Win% column narrows from 7 to 5 cells to match.
+
 ## [0.0.7] - 2026-08-22
 
 Tracks the `pkcore` engine from `0.2.1` up to `0.7.0`, and lifts the stud seat

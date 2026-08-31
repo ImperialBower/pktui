@@ -16,3 +16,9 @@
 
 ## 2026-08-22
 * **Update**: Bumped pkcore `0.6.0` → `0.7.0`. No pktui source change: the release's breaking signatures (`next_actor`, `Deck::get`, `KuhnCfr::train`, `Terminal::receive_usize`, `HUPResult::from_sorted_heads_up`) are all on APIs pktui does not call. Dropped the pinned engine version from the stud seat-cap note in [getting started](/getting-started.md) so it stops drifting.
+
+## 2026-08-30
+* **Update**: Bumped pkcore `0.7.0` → `0.11.0`. No pktui source change; build, clippy, and all 224 tests pass unmodified.
+* **Update**: Recorded the reduced `EquityOptions::max_samples` default (100,000 → 25,000) and the paths it does and does not affect in [OddsCache](/ui/odds-cache.md).
+* **Change**: Win% now renders a whole percent instead of a tenth, in the [table view](/ui/table-view.md) and [replay view](/ui/replay-view.md), because a tenth is below the resolution of the new sampled multiway-preflop estimate.
+* **Note**: pkcore dropped `store` and `terminal` from its default features, removing bundled SQLite, zstd, termion, and pkstate — 19 crates — from pktui's tree. `TableManager` / `TableEvent` are deprecated upstream; pktui uses neither.
